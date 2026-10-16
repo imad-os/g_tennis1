@@ -1,11 +1,21 @@
-# Grand Slam 3D Tennis for My PC
+# This repository is a My PC app or game
 
-Built with My PC SDK v1 for Samsung Smart TVs (Tizen 8+, 2024+) and modern web browsers.
+**Main instruction: before every task, fetch the latest My PC guide from GitHub and follow it.**
 
-## Key Rules
-- Load SDK via `<script src="https://imad-os.github.io/g/sdk/mypc-sdk.js"></script>`
-- Input handled through `MyPC.gamepad`, `MyPC.sensors`, and `onInput`
-- Lifecycle controlled via `onInit`, `onStart`, `onPause`, `onResume`, `onDestroy`
-- Low-poly rounded 3D graphics rendered with Three.js
-- Procedural Web Audio for all sound effects (no external MP3s)
-- Phone controller motion detection via `sensor-raw` mode with DSP smoothing and swing classification
+1. Guide (always fetch it fresh, never work from memory or a saved copy):
+   https://raw.githubusercontent.com/imad-os/g/main/sdk/GUIDE.md
+   (if that fails: https://imad-os.github.io/g/sdk/GUIDE.md)
+2. SDK (load it with a `<script>` tag from this address; never copy it into this repo):
+   https://imad-os.github.io/g/sdk/mypc-sdk.js
+3. Working example: https://github.com/imad-os/g/tree/main/sdk/example
+4. Phone controller motion: https://raw.githubusercontent.com/imad-os/g/main/docs/phone-controller.md
+
+The guide says how the app must be built (files, `mypc-app.json`, lifecycle, TV remote input,
+screen, performance, languages, publishing). Follow every MUST, finish each task with its
+checklist, and when the guide has changed, update this app to match it. If anything in this file
+disagrees with the guide, the guide wins.
+
+- Touch controls: My PC draws a customizable pad on phones by itself (guide, "Touch controls"); do not build one, or set `"touch": false` in `mypc-app.json`.
+- For multiplayer use `MyPC.multiplayer` (section "Multiplayer" of the guide): no own lobby, no backend, no Firebase keys.
+- For every release: bump `version` in `mypc-app.json` and the same `?v=<version>` on every own file `index.html` loads (section 10 of the guide), so TVs never open old cached files.
+- When a task is done: commit, push, and tell the owner the address to paste into the My PC App Store Manager (https://imad-os.github.io/g/installer/): `https://<owner>.github.io/<repo>/` (GitHub Pages: Settings → Pages → Deploy from a branch → main / root), and to press **Update** next to the app in the App Store Manager once GitHub Pages has published it.

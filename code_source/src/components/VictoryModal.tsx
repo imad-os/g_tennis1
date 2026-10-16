@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { MatchStats } from '../types/game';
 import { sound } from '../services/sound';
 import { mypcBridge } from '../services/mypcBridge';
+import { t } from '../services/i18n';
 
 interface VictoryModalProps {
   winner: 1 | 2;
@@ -27,6 +28,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
 }) => {
   const winnerName = winner === 1 ? p1Name : p2Name;
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const strings = t();
 
   useEffect(() => {
     sound.playCrowdCheer('big');
@@ -35,7 +37,8 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
     // Submit score to My PC top-10 leaderboard
     const matchScore = winner === 1 ? 1000 + stats.longestRally * 50 : 250;
     mypcBridge.saveScore(matchScore);
-  }, [winner, stats]);
+    mypcBridge.announceVoice(`${winnerName} wins the match! Score: ${matchScore}`);
+  }, [winner, stats, winnerName]);
 
   // TV Remote, Keyboard, and Gamepad navigation
   useEffect(() => {
@@ -56,12 +59,9 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
 
     const unsubGamepad = mypcBridge.addGamepadButtonListener((index, pressed) => {
       if (!pressed) return;
-      if (index === 12 || index === 13) {
-        setSelectedIndex((p) => (p === 0 ? 1 : 0));
-      } else if (index === 0) {
-        if (selectedIndex === 0) onPlayAgain();
-        else onQuitToTitle();
-      } else if (index === 1) {
+      if (index === 1) {
+        // B button Back
+        sound.playUIBeep(false);
         onQuitToTitle();
       }
     });
@@ -73,14 +73,13 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   }, [selectedIndex]);
 
   return (
-    /* Solid opaque background without any GPU-lagging backdrop-filter blur */
     <div className="absolute inset-0 bg-[#020617] z-50 flex items-center justify-center p-6 pointer-events-auto">
       <div className="bg-[#0f172a] border-2 border-slate-700 rounded-3xl w-full max-w-md p-8 shadow-2xl text-center space-y-6">
         <div className="text-5xl">🏆</div>
 
         <div className="space-y-1">
           <div className="text-xs font-bold text-lime-400 uppercase tracking-widest">
-            MATCH POINT WON
+            {winner === 1 ? strings.matchWon : strings.matchLost}
           </div>
           <h2 className="font-display text-3xl font-black text-white">
             {winnerName} WINS!
@@ -118,7 +117,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 : 'bg-lime-400/20 text-lime-300 border-lime-500/30'
             }`}
           >
-            Play Rematch
+            {strings.playAgain}
           </button>
 
           <button
@@ -133,13 +132,14 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 : 'bg-[#090d16] text-slate-300 border-slate-800 hover:bg-slate-800'
             }`}
           >
-            Main Menu
+            {strings.mainMenu}
           </button>
         </div>
 
         <div className="text-[11px] text-slate-400 flex items-center justify-center gap-3 pt-1">
-          <span><strong>↑ ↓</strong> Select</span>
-          <span><strong>OK / A</strong> Confirm</span>
+          <span><strong>↑ ↓</strong> {strings.navigateHint}</span>
+          <span><strong>OK / A</strong> {strings.selectHint}</span>
+          <span><strong>Esc / B</strong> {strings.backHint}</span>
         </div>
       </div>
     </div>

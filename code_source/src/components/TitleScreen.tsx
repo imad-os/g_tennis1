@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { GameMode } from '../types/game';
 import { sound } from '../services/sound';
 import { mypcBridge } from '../services/mypcBridge';
+import { t } from '../services/i18n';
 
 interface TitleScreenProps {
   onSelectMode: (mode: GameMode) => void;
@@ -20,15 +21,16 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   phoneConnected,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const strings = t();
 
   const menuItems = [
-    { id: 'ai', label: 'Quick Match vs AI', desc: 'Single player exhibition against smart AI' },
-    { id: 'local2p', label: 'Local 2-Player Versus', desc: 'P1 Motion or Pad vs P2 Gamepad / Remote' },
-    { id: 'motion_lab', label: 'Motion Lab & Practice', desc: 'Test swing detection, oscilloscope & calibration' },
-    { id: 'settings', label: 'Settings', desc: 'Tweak motion DSP, court surface & graphics' },
+    { id: 'ai', label: strings.quickMatch, desc: strings.quickMatchDesc },
+    { id: 'local2p', label: strings.local2p, desc: strings.local2pDesc },
+    { id: 'motion_lab', label: strings.motionLab, desc: strings.motionLabDesc },
+    { id: 'settings', label: strings.settings, desc: strings.settingsDesc },
   ];
 
-  // TV Remote & Gamepad navigation
+  // TV Remote, Keyboard & Gamepad navigation
   useEffect(() => {
     const unsubInput = mypcBridge.addActionListener((action, pressed) => {
       if (!pressed) return;
@@ -44,24 +46,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       }
     });
 
-    const unsubGamepad = mypcBridge.addGamepadButtonListener((index, pressed) => {
-      if (!pressed) return;
-      if (index === 12) {
-        // D-pad Up
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : menuItems.length - 1));
-      } else if (index === 13) {
-        // D-pad Down
-        setSelectedIndex((prev) => (prev < menuItems.length - 1 ? prev + 1 : 0));
-      } else if (index === 0) {
-        // Gamepad A
-        triggerSelection(selectedIndex);
-      }
-    });
-
-    return () => {
-      unsubInput();
-      unsubGamepad();
-    };
+    return unsubInput;
   }, [selectedIndex]);
 
   const triggerSelection = (idx: number) => {
@@ -83,10 +68,10 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
           <div>
             <h1 className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-white">
-              GRAND SLAM 3D
+              {strings.title}
             </h1>
             <p className="text-xs font-medium text-slate-400 tracking-wider">
-              MOTION TENNIS CHAMPIONSHIP
+              {strings.subtitle}
             </p>
           </div>
         </div>
@@ -97,11 +82,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           {phoneConnected ? (
             <span className="text-xs font-bold text-lime-400 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-lime-400" />
-              Phone Motion Active
+              {strings.phoneActive}
             </span>
           ) : (
             <span className="text-xs font-medium text-sky-400">
-              Gamepad / TV Remote Ready
+              {strings.gamepadReady}
             </span>
           )}
         </div>
@@ -110,7 +95,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       {/* Main Menu Choices */}
       <div className="max-w-xl my-auto space-y-3">
         <p className="text-xs font-semibold text-lime-400 tracking-widest uppercase">
-          Select Game Mode
+          {strings.selectHint}
         </p>
 
         <div className="space-y-2.5">
@@ -126,8 +111,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 onMouseEnter={() => setSelectedIndex(idx)}
                 className={`w-full text-left p-4 rounded-2xl transition-all duration-150 flex items-center justify-between border ${
                   isSelected
-                    ? 'bg-slate-900/90 border-lime-400 text-white shadow-xl shadow-lime-500/10 scale-[1.02] ring-2 ring-lime-400/40'
-                    : 'bg-slate-900/50 border-slate-800 text-slate-300 hover:bg-slate-900/80'
+                    ? 'bg-slate-900 border-lime-400 text-white shadow-xl shadow-lime-500/10 scale-[1.02] ring-2 ring-lime-400/40'
+                    : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:bg-slate-900/90'
                 }`}
               >
                 <div>
@@ -135,7 +120,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     {item.label}
                     {item.id === 'motion_lab' && (
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 font-semibold">
-                        DSP & Calibration
+                        DSP &amp; Calibration
                       </span>
                     )}
                   </div>
@@ -158,14 +143,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       {/* Bottom TV Control Hints */}
       <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-800/80 text-xs text-slate-400">
         <div className="flex items-center gap-4">
-          <span><strong className="text-white">↑ ↓</strong> Navigate</span>
-          <span><strong className="text-white">OK / A</strong> Select</span>
-          <span><strong className="text-white">Esc / B</strong> Back</span>
+          <span><strong className="text-white">↑ ↓</strong> {strings.navigateHint}</span>
+          <span><strong className="text-white">OK / A</strong> {strings.selectHint}</span>
+          <span><strong className="text-white">Esc / B</strong> {strings.backHint}</span>
         </div>
         <div className="flex items-center gap-2 text-slate-500">
           <span>My PC SDK v1</span>
           <span>·</span>
-          <span>Tizen 8/9 & Browser Verified</span>
+          <span>Samsung Smart TV &amp; Web</span>
         </div>
       </div>
     </div>

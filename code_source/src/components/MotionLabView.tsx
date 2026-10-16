@@ -8,12 +8,14 @@ import { motionDSP } from '../services/motionDSPs';
 import { sound } from '../services/sound';
 import { mypcBridge } from '../services/mypcBridge';
 import { PowerLevel, ShotType, SwingDetectionEvent } from '../types/game';
+import { t } from '../services/i18n';
 
 interface MotionLabViewProps {
   onBack: () => void;
 }
 
 export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
+  const strings = t();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [config, setConfig] = useState(motionDSP.getConfig());
   const [isLeftHanded, setIsLeftHanded] = useState(motionDSP.getLeftHanded());
@@ -75,7 +77,6 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
         } else if (focusedIndex === 1) {
           handleHandToggle(!isLeftHanded);
         } else if (focusedIndex >= 4 && focusedIndex <= 8) {
-          // Move between test buttons
           const next = toRight ? Math.min(8, focusedIndex + 1) : Math.max(4, focusedIndex - 1);
           setFocusedIndex(next);
         }
@@ -89,10 +90,8 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
       if (!pressed) return;
       if (index === 1) {
         // B Button (Back)
+        sound.playUIBeep(false);
         onBack();
-      } else if (index === 0) {
-        // A Button (Select)
-        triggerFocused();
       }
     });
 
@@ -209,7 +208,7 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
     setTimeout(() => {
       motionDSP.calibrateGrip();
       setConfig(motionDSP.getConfig());
-      setCalibrationStatus('Calibrated! Bias Zeroed');
+      setCalibrationStatus(strings.calibrated);
       setTimeout(() => setCalibrationStatus('Ready'), 2500);
     }, 350);
   };
@@ -234,13 +233,12 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
   };
 
   return (
-    /* Solid opaque background without any GPU-lagging backdrop-filter blur */
     <div className="absolute inset-0 bg-[#020617] z-30 flex flex-col p-6 md:p-8 overflow-y-auto text-white pointer-events-auto">
       {/* Header */}
       <div className="flex items-center justify-between pb-4 border-b border-slate-800">
         <div>
           <h2 className="font-display text-2xl font-black text-white flex items-center gap-2">
-            <span>🔬</span> MOTION LAB &amp; DSP CALIBRATION
+            <span>🔬</span> {strings.motionLab}
           </h2>
           <p className="text-xs text-slate-400">
             TV Remote &amp; Gamepad: ↑ ↓ to navigate · ← → to adjust · OK / A to activate
@@ -255,7 +253,7 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
               : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
           }`}
         >
-          Done (Back)
+          {strings.backHint}
         </button>
       </div>
 
@@ -360,13 +358,13 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
               <span className="text-xs font-mono text-lime-400">{calibrationStatus}</span>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed mt-1">
-              Hold the phone like a racket handle in your relaxed stance facing the TV, then press Calibrate.
+              {strings.calibrateDesc}
             </p>
             <button
               onClick={handleCalibrate}
               className="w-full mt-3 py-3 rounded-xl bg-lime-400 hover:bg-lime-300 text-slate-950 font-black text-xs uppercase tracking-wider transition-colors shadow-lg shadow-lime-400/20"
             >
-              Calibrate Grip (Neutralize Bias)
+              {strings.calibrate}
             </button>
           </div>
 
@@ -378,7 +376,7 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
                 : 'border-slate-800'
             }`}
           >
-            <span className="text-xs font-bold text-slate-300">Dominant Hand (OK to switch)</span>
+            <span className="text-xs font-bold text-slate-300">{strings.dominantHand} (OK to switch)</span>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => handleHandToggle(false)}
@@ -388,7 +386,7 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
                     : 'bg-[#090d16] border-slate-800 text-slate-400'
                 }`}
               >
-                Right Hand
+                {strings.rightHand}
               </button>
               <button
                 onClick={() => handleHandToggle(true)}
@@ -398,7 +396,7 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
                     : 'bg-[#090d16] border-slate-800 text-slate-400'
                 }`}
               >
-                Left Hand
+                {strings.leftHand}
               </button>
             </div>
           </div>
@@ -412,7 +410,7 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
             }`}
           >
             <div className="flex justify-between text-xs">
-              <span className="font-bold text-slate-300">Swing Sensitivity (← → to adjust)</span>
+              <span className="font-bold text-slate-300">{strings.sensitivity} (← → to adjust)</span>
               <span className="font-mono text-lime-400 font-bold">{config.sensitivity.toFixed(1)}x</span>
             </div>
             <input
@@ -435,7 +433,7 @@ export const MotionLabView: React.FC<MotionLabViewProps> = ({ onBack }) => {
             }`}
           >
             <div className="flex justify-between text-xs">
-              <span className="font-bold text-slate-300">Tremor Smoothing (← → to adjust)</span>
+              <span className="font-bold text-slate-300">{strings.smoothing} (← → to adjust)</span>
               <span className="font-mono text-lime-400 font-bold">{(config.smoothing * 100).toFixed(0)}%</span>
             </div>
             <input

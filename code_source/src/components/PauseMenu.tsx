@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { sound } from '../services/sound';
 import { mypcBridge } from '../services/mypcBridge';
+import { t } from '../services/i18n';
 
 interface PauseMenuProps {
   onResume: () => void;
@@ -23,13 +24,14 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   onQuitToTitle,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const strings = t();
 
   const menuOptions = [
-    { label: 'Resume Match', action: onResume, primary: true },
-    { label: 'Restart Match', action: onRestart },
-    { label: 'Motion Lab & Calibration', action: onOpenMotionLab },
-    { label: 'Game Settings', action: onOpenSettings },
-    { label: 'Quit to Title Screen', action: onQuitToTitle, danger: true },
+    { label: strings.resume, action: onResume, primary: true },
+    { label: strings.restart, action: onRestart },
+    { label: strings.motionLab, action: onOpenMotionLab },
+    { label: strings.settings, action: onOpenSettings },
+    { label: strings.quit, action: onQuitToTitle, danger: true },
   ];
 
   // TV Remote, Keyboard, and Gamepad navigation
@@ -53,17 +55,9 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
 
     const unsubGamepad = mypcBridge.addGamepadButtonListener((index, pressed) => {
       if (!pressed) return;
-      if (index === 12) {
-        // D-Pad Up
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : menuOptions.length - 1));
-      } else if (index === 13) {
-        // D-Pad Down
-        setSelectedIndex((prev) => (prev < menuOptions.length - 1 ? prev + 1 : 0));
-      } else if (index === 0) {
-        // A Button
-        menuOptions[selectedIndex].action();
-      } else if (index === 1) {
-        // B Button (Back)
+      if (index === 1) {
+        // B Button (Back / Resume)
+        sound.playUIBeep(false);
         onResume();
       }
     });
@@ -75,14 +69,13 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   }, [selectedIndex]);
 
   return (
-    /* Solid opaque background without any GPU-lagging backdrop-filter blur */
     <div className="absolute inset-0 bg-[#020617] z-40 flex items-center justify-center p-6 pointer-events-auto">
       <div className="bg-[#0f172a] border-2 border-slate-700 rounded-3xl w-full max-w-sm p-6 shadow-2xl text-center space-y-4">
         <div className="space-y-1">
           <h2 className="font-display text-2xl font-black text-white tracking-wide">
-            MATCH PAUSED
+            {strings.paused}
           </h2>
-          <p className="text-xs text-slate-400">Grand Slam 3D Tennis</p>
+          <p className="text-xs text-slate-400">{strings.title}</p>
         </div>
 
         <div className="space-y-2 pt-2">
@@ -113,9 +106,9 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
         </div>
 
         <div className="pt-2 text-[11px] text-slate-400 flex items-center justify-center gap-3">
-          <span><strong>↑ ↓</strong> Navigate</span>
-          <span><strong>OK / A</strong> Select</span>
-          <span><strong>Esc / B</strong> Resume</span>
+          <span><strong>↑ ↓</strong> {strings.navigateHint}</span>
+          <span><strong>OK / A</strong> {strings.selectHint}</span>
+          <span><strong>Esc / B</strong> {strings.backHint}</span>
         </div>
       </div>
     </div>

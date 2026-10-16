@@ -6,8 +6,9 @@
 import { RawSensorSample } from '../types/game';
 import { motionDSP } from './motionDSPs';
 import { sound } from './sound';
+import { setLanguage } from './i18n';
 
-// MyPC SDK Type Declarations
+// MyPC SDK Type Declarations conforming to MyPC SDK v1
 export interface MyPCInfo {
   standalone: boolean;
   lang: string;
@@ -92,39 +93,58 @@ class MyPCBridgeService {
   private axesListeners: Set<GamepadAxesListener> = new Set();
   private connectedPhoneModes: Record<number, string | null> = {};
   private activeProfileName: string = 'Player 1';
+  private qualityTier: 'low' | 'mid' | 'high' = 'mid';
+  private startCallbacks: Array<() => void> = [];
   private pauseCallbacks: Array<() => void> = [];
   private resumeCallbacks: Array<() => void> = [];
+  private destroyCallbacks: Array<() => void> = [];
+  private menuCallbacks: Array<(id: string) => void> = [];
 
-  public initBridge(onReadyToShowUI: () => void) {
-    if (this.isInitialized) return;
+  public initBridge(onReadyToShowUI?: () => void) {
+    if (this.isInitialized) {
+      if (onReadyToShowUI) onReadyToShowUI();
+      return;
+    }
     this.isInitialized = true;
 
-    if (window.MyPC) {
+    if (typeof window !== 'undefined' && window.MyPC) {
       window.MyPC.init({
         ownMenu: true,
+        pad: true, // Show touch pad on phones/tablets in standalone mode
         onInit: (info: MyPCInfo) => {
+          if (info.lang) {
+            setLanguage(info.lang);
+          }
           if (info.profile?.name) {
             this.activeProfileName = info.profile.name;
+          }
+          if (info.quality?.tier) {
+            this.qualityTier = info.quality.tier;
           }
           if (info.volume) {
             sound.setVolume(info.volume.sfx);
           }
 
-          // Register pause menu items with My PC
-          window.MyPC?.setMenu([
-            { id: 'resume', label: 'Resume Match' },
-            { id: 'restart', label: 'Restart Match' },
-            { id: 'motion', label: 'Motion Lab' },
-            { id: 'settings', label: 'Settings' },
-            { id: 'quit', label: 'Quit to Desktop' },
-          ]);
+          // Register pause menu items with My PC TV shell
+          try {
+            window.MyPC?.setMenu([
+              { id: 'resume', label: 'Resume Match' },
+              { id: 'restart', label: 'Restart Match' },
+              { id: 'motion', label: 'Motion Lab' },
+              { id: 'settings', label: 'Settings' },
+              { id: 'quit', label: 'Quit to Title' },
+            ]);
+          } catch {
+            // older SDKs
+          }
 
-          // Configure Phone Motion controller
+          // Configure Phone Motion controller (API level 8)
           if (window.MyPC?.sensors) {
             try {
               window.MyPC.sensors.setup({
                 raw: { hz: 50 },
                 moves: ['LEFT', 'RIGHT', 'JUMP', 'DUCK'],
+                profile: { phone_position: 'right hand' },
               });
 
               window.MyPC.sensors.on('raw', (r, _player) => {
@@ -152,33 +172,42 @@ class MyPCBridgeService {
                 this.connectedPhoneModes = modes || {};
               });
             } catch {
-              // sensors not supported on older firmware
+              // ignore
             }
           }
 
-          // Configure Gamepads
+          // Configure Gamepads (API level 9)
           if (window.MyPC?.gamepad) {
-            window.MyPC.gamepad.on('button', (i, pressed, val, dev, name) => {
-              for (const l of this.buttonListeners) {
-                l(i, pressed, val, dev, name);
-              }
-            });
+            try {
+              window.MyPC.gamepad.on('button', (i, pressed, val, dev, name) => {
+                for (const l of this.buttonListeners) {
+                  l(i, pressed, val, dev, name);
+                }
+              });
 
-            window.MyPC.gamepad.on('axes', (axes, dev) => {
-              for (const l of this.axesListeners) {
-                l(axes, dev);
-              }
-            });
+              window.MyPC.gamepad.on('axes', (axes, dev) => {
+                for (const l of this.axesListeners) {
+                  l(axes, dev);
+                }
+              });
+            } catch {
+              // ignore
+            }
           }
 
-          // Let My PC know we are ready
+          // Report 100% progress and notify My PC that loading is complete
+          window.MyPC?.progress(1);
           window.MyPC?.ready();
-          onReadyToShowUI();
+
+          if (onReadyToShowUI) {
+            onReadyToShowUI();
+          }
         },
         onStart: () => {
           this.isPaused = false;
           sound.init();
           sound.resume();
+          for (const cb of this.startCallbacks) cb();
         },
         onPause: () => {
           this.isPaused = true;
@@ -193,23 +222,35 @@ class MyPCBridgeService {
         onDestroy: () => {
           this.isPaused = true;
           sound.destroy();
-          window.MyPC?.sensors?.stop();
+          try {
+            window.MyPC?.sensors?.stop();
+          } catch {
+            // ignore
+          }
+          for (const cb of this.destroyCallbacks) cb();
         },
         onInput: (action, pressed, repeat, dev = 'keys') => {
           for (const l of this.actionListeners) {
             l(action, pressed, repeat, dev);
           }
         },
+        onMenu: (id) => {
+          for (const cb of this.menuCallbacks) cb(id);
+        },
         onVolume: (v) => {
           if (v) sound.setVolume(v.sfx);
         },
       });
     } else {
-      // Standalone browser execution without My PC TV shell
-      this.setupStandaloneKeyboardFallback();
-      sound.init();
-      onReadyToShowUI();
+      // Standalone execution outside My PC iframe
+      if (onReadyToShowUI) {
+        onReadyToShowUI();
+      }
     }
+  }
+
+  public onStartEvent(cb: () => void) {
+    this.startCallbacks.push(cb);
   }
 
   public onPauseEvent(cb: () => void) {
@@ -218,6 +259,14 @@ class MyPCBridgeService {
 
   public onResumeEvent(cb: () => void) {
     this.resumeCallbacks.push(cb);
+  }
+
+  public onDestroyEvent(cb: () => void) {
+    this.destroyCallbacks.push(cb);
+  }
+
+  public onMenuEvent(cb: (id: string) => void) {
+    this.menuCallbacks.push(cb);
   }
 
   public addActionListener(fn: InputActionListener): () => void {
@@ -236,12 +285,16 @@ class MyPCBridgeService {
   }
 
   public isPhoneMotionActive(): boolean {
-    if (!window.MyPC) return false;
-    // Check if any connected player phone is in 'sensor-raw' mode
-    for (const p in this.connectedPhoneModes) {
-      if (this.connectedPhoneModes[p] === 'sensor-raw') {
-        return true;
+    if (!window.MyPC?.sensors) return false;
+    try {
+      const players = window.MyPC.sensors.players ? window.MyPC.sensors.players() : this.connectedPhoneModes;
+      for (const p in players) {
+        if (players[p] === 'sensor-raw') {
+          return true;
+        }
       }
+    } catch {
+      // fallback
     }
     return false;
   }
@@ -254,9 +307,19 @@ class MyPCBridgeService {
     return this.activeProfileName;
   }
 
+  public getQualityTier(): 'low' | 'mid' | 'high' {
+    return this.qualityTier;
+  }
+
   public saveScore(score: number, players: number = 1) {
     if (window.MyPC?.submitScore) {
       window.MyPC.submitScore(score, { players });
+    }
+  }
+
+  public announceVoice(text: string) {
+    if (window.MyPC?.announce) {
+      window.MyPC.announce(text);
     }
   }
 
@@ -288,61 +351,6 @@ class MyPCBridgeService {
     if (window.MyPC?.exit) {
       window.MyPC.exit();
     }
-  }
-
-  /**
-   * Browser keyboard fallback when not running in My PC TV iframe.
-   * Enables complete testing in Chrome/Edge/Firefox on desktop!
-   */
-  private setupStandaloneKeyboardFallback() {
-    window.addEventListener('keydown', (e) => {
-      let action: string | null = null;
-      let dev = 'keys';
-
-      if (e.key === 'ArrowUp') action = 'up';
-      else if (e.key === 'ArrowDown') action = 'down';
-      else if (e.key === 'ArrowLeft') action = 'left';
-      else if (e.key === 'ArrowRight') action = 'right';
-      else if (e.key === 'Enter' || e.key === ' ') action = 'confirm';
-      else if (e.key === 'x' || e.key === 'X' || e.key === 'Shift') action = 'run';
-      else if (e.key === 'Escape' || e.key === 'Backspace') action = 'cancel';
-      // Player 2 keys
-      else if (e.key === 'w' || e.key === 'W') { action = 'up'; dev = 'keys2'; }
-      else if (e.key === 's' || e.key === 'S') { action = 'down'; dev = 'keys2'; }
-      else if (e.key === 'a' || e.key === 'A') { action = 'left'; dev = 'keys2'; }
-      else if (e.key === 'd' || e.key === 'D') { action = 'right'; dev = 'keys2'; }
-      else if (e.key === 'f' || e.key === 'F') { action = 'confirm'; dev = 'keys2'; }
-
-      if (action) {
-        for (const l of this.actionListeners) {
-          l(action, true, e.repeat, dev);
-        }
-      }
-    });
-
-    window.addEventListener('keyup', (e) => {
-      let action: string | null = null;
-      let dev = 'keys';
-
-      if (e.key === 'ArrowUp') action = 'up';
-      else if (e.key === 'ArrowDown') action = 'down';
-      else if (e.key === 'ArrowLeft') action = 'left';
-      else if (e.key === 'ArrowRight') action = 'right';
-      else if (e.key === 'Enter' || e.key === ' ') action = 'confirm';
-      else if (e.key === 'x' || e.key === 'X' || e.key === 'Shift') action = 'run';
-      else if (e.key === 'Escape') action = 'cancel';
-      else if (e.key === 'w' || e.key === 'W') { action = 'up'; dev = 'keys2'; }
-      else if (e.key === 's' || e.key === 'S') { action = 'down'; dev = 'keys2'; }
-      else if (e.key === 'a' || e.key === 'A') { action = 'left'; dev = 'keys2'; }
-      else if (e.key === 'd' || e.key === 'D') { action = 'right'; dev = 'keys2'; }
-      else if (e.key === 'f' || e.key === 'F') { action = 'confirm'; dev = 'keys2'; }
-
-      if (action) {
-        for (const l of this.actionListeners) {
-          l(action, false, false, dev);
-        }
-      }
-    });
   }
 }
 

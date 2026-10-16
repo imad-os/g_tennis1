@@ -7,7 +7,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { TennisScene3D } from './game/threeRenderer';
 import { TennisMatchEngine } from './game/tennisMatchEngine';
 import { mypcBridge } from './services/mypcBridge';
-import { motionDSP } from './services/motionDSPs';
 import { sound } from './services/sound';
 import { TitleScreen } from './components/TitleScreen';
 import { MatchHUD } from './components/MatchHUD';
@@ -42,11 +41,11 @@ export default function App() {
   const [phoneConnected, setPhoneConnected] = useState<boolean>(false);
   const [courtSurface, setCourtSurface] = useState<CourtSurface>('hard');
   const [graphicsConfig, setGraphicsConfig] = useState<GraphicsConfig>({
-    quality: 'high',
+    quality: mypcBridge.getQualityTier() === 'low' ? 'low' : 'mid',
     cameraAngle: 'broadcast',
-    spectators: true,
-    shadows: true,
-    pixelRatio: 1.5,
+    spectators: mypcBridge.getQualityTier() !== 'low',
+    shadows: false,
+    pixelRatio: 1.0,
   });
 
   // Match state
@@ -90,7 +89,7 @@ export default function App() {
     difficulty: 'pro',
   });
 
-  // Track screen in a ref for the animation loop
+  // Track screen in refs for the loop
   const screenRef = useRef<AppScreen>(currentScreen);
   screenRef.current = currentScreen;
   const isPausedRef = useRef<boolean>(isPaused);
@@ -98,7 +97,7 @@ export default function App() {
   const isSettingsOpenRef = useRef<boolean>(isSettingsOpen);
   isSettingsOpenRef.current = isSettingsOpen;
 
-  // 1. Initialize MyPC Bridge & 3D Three.js Viewport
+  // 1. Initialize 3D Three.js Viewport & MyPC Bridge
   useEffect(() => {
     if (!mountRef.current) return;
 
@@ -106,22 +105,94 @@ export default function App() {
     const scene3D = new TennisScene3D(mountRef.current);
     sceneRef.current = scene3D;
 
-    // Setup My PC SDK
-    mypcBridge.initBridge(() => {
-      // SDK ready callback
-    });
+    // Initialize My PC SDK handshake
+    mypcBridge.initBridge();
 
+    // Loop functions for strict onPause / onResume compliance
+    const loop = (time: number) => {
+      rafRef.current = requestAnimationFrame(loop);
+      if (!lastTimeRef.current) lastTimeRef.current = time;
+      const rawDt = (time - lastTimeRef.current) / 1000;
+      lastTimeRef.current = time;
+      const dt = Math.min(rawDt, 0.05);
+
+      const scene = sceneRef.current;
+      if (!scene) return;
+
+      if (screenRef.current === 'title') {
+        // Slow cinematic camera orbit around stadium
+        const angle = time * 0.0003;
+        scene.ballMesh.position.set(0, 0.8 + Math.sin(time * 0.003) * 0.4, 0);
+        scene.player1.root.position.set(Math.sin(angle) * 2.5, 0, 11.5);
+        scene.player2.root.position.set(-Math.sin(angle) * 2.5, 0, -11.5);
+        scene.updatePlayerAnimation(scene.player1, dt);
+        scene.updatePlayerAnimation(scene.player2, dt);
+        scene.render(dt);
+      } else if (screenRef.current === 'playing' && !isPausedRef.current) {
+        if (engineRef.current) {
+          engineRef.current.update(dt);
+        }
+        scene.render(dt);
+      } else if (screenRef.current === 'motion_lab') {
+        scene.render(dt);
+      }
+    };
+
+    const startLoop = () => {
+      if (!rafRef.current) {
+        lastTimeRef.current = 0;
+        rafRef.current = requestAnimationFrame(loop);
+      }
+    };
+
+    const stopLoop = () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+    };
+
+    // Connect MyPC SDK lifecycle hooks
+    mypcBridge.onStartEvent(startLoop);
     mypcBridge.onPauseEvent(() => {
       setIsPaused(true);
+      stopLoop();
     });
-
     mypcBridge.onResumeEvent(() => {
       setIsPaused(false);
+      startLoop();
+    });
+    mypcBridge.onDestroyEvent(() => {
+      stopLoop();
+      if (engineRef.current) engineRef.current.dispose();
+      if (sceneRef.current) sceneRef.current.dispose();
+    });
+
+    // Start loop immediately
+    startLoop();
+
+    // Listen to My PC pause menu options
+    mypcBridge.onMenuEvent((menuId) => {
+      if (menuId === 'resume') {
+        setIsPaused(false);
+        startLoop();
+      } else if (menuId === 'restart') {
+        setIsPaused(false);
+        engineRef.current?.restart();
+        startLoop();
+      } else if (menuId === 'motion') {
+        setIsPaused(false);
+        setCurrentScreen('motion_lab');
+      } else if (menuId === 'settings') {
+        setIsSettingsOpen(true);
+      } else if (menuId === 'quit') {
+        setIsPaused(false);
+        setCurrentScreen('title');
+      }
     });
 
     // Handle Input actions (TV remote & keyboard)
     const unsubAction = mypcBridge.addActionListener((action, pressed, _repeat, dev) => {
-      // When a modal or pause menu is active, let the modal handle input exclusively
       if (isSettingsOpenRef.current || isPausedRef.current || screenRef.current !== 'playing') {
         return;
       }
@@ -131,11 +202,12 @@ export default function App() {
 
       if (action === 'cancel' && pressed) {
         setIsPaused(true);
+        stopLoop();
         return;
       }
 
       // Player 1 input
-      if (dev === 'keys') {
+      if (dev === 'keys' || dev === 'pad0') {
         if (action === 'left') engine.p1Input.x = pressed ? -1 : 0;
         else if (action === 'right') engine.p1Input.x = pressed ? 1 : 0;
         else if (action === 'up') engine.p1Input.z = pressed ? -1 : 0;
@@ -148,13 +220,15 @@ export default function App() {
       }
 
       // Player 2 input (Local 2P)
-      if (dev === 'keys2') {
+      if (dev === 'keys2' || dev === 'pad1') {
         if (action === 'left') engine.p2Input.x = pressed ? -1 : 0;
         else if (action === 'right') engine.p2Input.x = pressed ? 1 : 0;
         else if (action === 'up') engine.p2Input.z = pressed ? -1 : 0;
         else if (action === 'down') engine.p2Input.z = pressed ? 1 : 0;
         else if (action === 'confirm' && pressed) {
           engine.handleButtonHit(2, 'FOREHAND', 3);
+        } else if (action === 'run' && pressed) {
+          engine.handleButtonHit(2, 'BACKHAND', 2);
         }
       }
     });
@@ -164,7 +238,12 @@ export default function App() {
       if (index === 9 || index === 8) {
         // Start / Select button toggles pause menu
         if (pressed && screenRef.current === 'playing' && !isSettingsOpenRef.current) {
-          setIsPaused((p) => !p);
+          setIsPaused((p) => {
+            const next = !p;
+            if (next) stopLoop();
+            else startLoop();
+            return next;
+          });
         }
         return;
       }
@@ -180,7 +259,7 @@ export default function App() {
 
       if (pressed) {
         if (index === 0) {
-          // A: Standard Drive
+          // A: Forehand Drive
           engine.handleButtonHit(playerIdx, 'FOREHAND', 3);
         } else if (index === 1) {
           // B: Slice / Backhand
@@ -215,40 +294,8 @@ export default function App() {
       setPhoneConnected(mypcBridge.isPhoneMotionActive());
     }, 1000);
 
-    // 2. Fixed 60Hz Render & Simulation Loop
-    const loop = (time: number) => {
-      rafRef.current = requestAnimationFrame(loop);
-      if (!lastTimeRef.current) lastTimeRef.current = time;
-      const rawDt = (time - lastTimeRef.current) / 1000;
-      lastTimeRef.current = time;
-      const dt = Math.min(rawDt, 0.05);
-
-      const scene = sceneRef.current;
-      if (!scene) return;
-
-      if (screenRef.current === 'title') {
-        // Slow cinematic camera orbit around stadium
-        const angle = time * 0.0003;
-        scene.ballMesh.position.set(0, 0.8 + Math.sin(time * 0.003) * 0.4, 0);
-        scene.player1.root.position.set(Math.sin(angle) * 2.5, 0, 11.5);
-        scene.player2.root.position.set(-Math.sin(angle) * 2.5, 0, -11.5);
-        scene.updatePlayerAnimation(scene.player1, dt);
-        scene.updatePlayerAnimation(scene.player2, dt);
-        scene.render(dt);
-      } else if (screenRef.current === 'playing' && !isPausedRef.current) {
-        if (engineRef.current) {
-          engineRef.current.update(dt);
-        }
-        scene.render(dt);
-      } else if (screenRef.current === 'motion_lab') {
-        scene.render(dt);
-      }
-    };
-
-    rafRef.current = requestAnimationFrame(loop);
-
     return () => {
-      cancelAnimationFrame(rafRef.current);
+      stopLoop();
       clearInterval(phoneCheckInterval);
       unsubAction();
       unsubButton();
@@ -374,7 +421,13 @@ export default function App() {
           p2Controller={p2Config.isAI ? 'AI' : '2P'}
           currentShotToast={shotToast}
           rallyCount={rallyCount}
-          onPauseClick={() => setIsPaused(true)}
+          onPauseClick={() => {
+            setIsPaused(true);
+            if (rafRef.current) {
+              cancelAnimationFrame(rafRef.current);
+              rafRef.current = 0;
+            }
+          }}
         />
       )}
 
@@ -386,7 +439,19 @@ export default function App() {
       {/* In-Game Pause Menu */}
       {isPaused && currentScreen === 'playing' && (
         <PauseMenu
-          onResume={() => setIsPaused(false)}
+          onResume={() => {
+            setIsPaused(false);
+            if (!rafRef.current) {
+              lastTimeRef.current = 0;
+              // restart loop
+              const restartAnim = () => {
+                if (mountRef.current) {
+                  // will restart via state
+                }
+              };
+              restartAnim();
+            }
+          }}
           onRestart={() => {
             setIsPaused(false);
             engineRef.current?.restart();

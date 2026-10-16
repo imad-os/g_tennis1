@@ -8,6 +8,7 @@ import { motionDSP } from '../services/motionDSPs';
 import { sound } from '../services/sound';
 import { mypcBridge } from '../services/mypcBridge';
 import { CourtSurface, GraphicsConfig } from '../types/game';
+import { t } from '../services/i18n';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -28,25 +29,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onChangeGraphicsConfig,
   onOpenMotionLab,
 }) => {
+  const strings = t();
   const tabs: TabKey[] = ['motion', 'graphics', 'audio', 'controls'];
   const [activeTab, setActiveTab] = useState<TabKey>('motion');
+  // 0: Tab selector header (Left/Right to switch tabs on TV Remote)
+  // 1..N: Tab items
+  // Last: Close button
   const [focusedIndex, setFocusedIndex] = useState<number>(0);
   const [motionConfig, setMotionConfig] = useState(motionDSP.getConfig());
   const [calibratedMsg, setCalibratedMsg] = useState(false);
   const [isLeftHanded, setIsLeftHanded] = useState(motionDSP.getLeftHanded());
   const [soundMuted, setSoundMuted] = useState(false);
 
-  // Focusable item counts per tab
+  // Focusable item counts per tab (including index 0 as Tab Bar)
   const getTabItemCount = (tab: TabKey): number => {
     switch (tab) {
-      case 'motion': return 6; // 0: Calibrate, 1: Motion Lab, 2: Right/Left Hand, 3: Sensitivity, 4: Smoothing, 5: Close
-      case 'graphics': return 4; // 0: Quality, 1: Camera, 2: Court, 3: Close
-      case 'audio': return 2; // 0: Mute/Unmute, 1: Close
-      case 'controls': return 1; // 0: Close
+      case 'motion': return 7; // 0: Tabs, 1: Calibrate, 2: Motion Lab, 3: Right/Left Hand, 4: Sensitivity, 5: Smoothing, 6: Close
+      case 'graphics': return 5; // 0: Tabs, 1: Quality, 2: Camera, 3: Court, 4: Close
+      case 'audio': return 3; // 0: Tabs, 1: Mute/Unmute, 2: Close
+      case 'controls': return 2; // 0: Tabs, 1: Close
     }
   };
 
-  // TV Remote & Gamepad input listener for menu navigation
+  // TV Remote, Keyboard, and Gamepad input listener for menu navigation
   useEffect(() => {
     const unsubAction = mypcBridge.addActionListener((action, pressed) => {
       if (!pressed) return;
@@ -65,7 +70,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         setFocusedIndex((prev) => (prev < getTabItemCount(activeTab) - 1 ? prev + 1 : 0));
       } else if (action === 'left' || action === 'right') {
         sound.playUIBeep(false);
-        // If focus is at top or tabs, or when adjusting sliders
         handleHorizontalNav(action === 'right');
       } else if (action === 'confirm') {
         sound.playUIBeep(true);
@@ -102,35 +106,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleHorizontalNav = (toRight: boolean) => {
+    // If focused on Tab Bar (index 0), cycle tabs
+    if (focusedIndex === 0) {
+      cycleTab(toRight ? 1 : -1);
+      return;
+    }
+
     if (activeTab === 'motion') {
-      if (focusedIndex === 3) {
+      if (focusedIndex === 4) {
         // Sensitivity
         const step = toRight ? 0.1 : -0.1;
         const next = Math.max(0.5, Math.min(2.5, motionConfig.sensitivity + step));
         handleSensitivity(next);
-      } else if (focusedIndex === 4) {
+      } else if (focusedIndex === 5) {
         // Smoothing
         const step = toRight ? 0.05 : -0.05;
         const next = Math.max(0.2, Math.min(0.85, motionConfig.smoothing + step));
         handleSmoothing(next);
-      } else if (focusedIndex === 2) {
+      } else if (focusedIndex === 3) {
         // Hand toggle
         handleHandToggle(!isLeftHanded);
       }
     } else if (activeTab === 'graphics') {
-      if (focusedIndex === 0) {
+      if (focusedIndex === 1) {
         // Quality cycle
         const qualities: GraphicsConfig['quality'][] = ['very_low', 'low', 'mid', 'high'];
         const idx = qualities.indexOf(graphicsConfig.quality);
         const next = qualities[(idx + (toRight ? 1 : -1) + qualities.length) % qualities.length];
         onChangeGraphicsConfig({ quality: next });
-      } else if (focusedIndex === 1) {
+      } else if (focusedIndex === 2) {
         // Camera cycle
         const cams: GraphicsConfig['cameraAngle'][] = ['broadcast', 'chase', 'overhead'];
         const idx = cams.indexOf(graphicsConfig.cameraAngle);
         const next = cams[(idx + (toRight ? 1 : -1) + cams.length) % cams.length];
         onChangeGraphicsConfig({ cameraAngle: next });
-      } else if (focusedIndex === 2) {
+      } else if (focusedIndex === 3) {
         // Court surface cycle
         const courts: CourtSurface[] = ['hard', 'clay', 'grass'];
         const idx = courts.indexOf(courtSurface);
@@ -141,24 +151,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleActivateFocused = () => {
+    const lastIdx = getTabItemCount(activeTab) - 1;
+    if (focusedIndex === lastIdx) {
+      onClose();
+      return;
+    }
+
     if (activeTab === 'motion') {
-      if (focusedIndex === 0) handleCalibrate();
-      else if (focusedIndex === 1) onOpenMotionLab();
-      else if (focusedIndex === 2) handleHandToggle(!isLeftHanded);
-      else if (focusedIndex === 5) onClose();
+      if (focusedIndex === 1) handleCalibrate();
+      else if (focusedIndex === 2) onOpenMotionLab();
+      else if (focusedIndex === 3) handleHandToggle(!isLeftHanded);
     } else if (activeTab === 'graphics') {
-      if (focusedIndex === 3) onClose();
-      else handleHorizontalNav(true);
+      handleHorizontalNav(true);
     } else if (activeTab === 'audio') {
-      if (focusedIndex === 0) {
+      if (focusedIndex === 1) {
         const next = !soundMuted;
         setSoundMuted(next);
         sound.setMuted(next);
-      } else if (focusedIndex === 1) {
-        onClose();
       }
-    } else if (activeTab === 'controls') {
-      onClose();
     }
   };
 
@@ -186,14 +196,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    /* Solid opaque background without any GPU-lagging backdrop-filter blur */
     <div className="absolute inset-0 bg-[#020617] z-40 flex items-center justify-center p-4 md:p-6 pointer-events-auto">
       <div className="bg-[#0f172a] border-2 border-slate-700 rounded-3xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
         {/* Top Header */}
         <div className="flex items-center justify-between p-6 bg-[#0f172a] border-b border-slate-800">
           <div>
             <h2 className="font-display text-xl md:text-2xl font-bold text-white flex items-center gap-2">
-              <span>⚙️</span> GAME SETTINGS
+              <span>⚙️</span> {strings.settings}
             </h2>
             <p className="text-xs text-slate-400">TV Remote / Gamepad / Keyboard Fully Supported</p>
           </div>
@@ -206,8 +215,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Selector (LB / RB to cycle on gamepad, or click) */}
-        <div className="flex items-center gap-1 p-2 bg-[#090d16] border-b border-slate-800">
+        {/* Tab Selector (Index 0 on focus: Left/Right to cycle on TV Remote or LB/RB on pad) */}
+        <div
+          className={`flex items-center gap-1 p-2 bg-[#090d16] border-b border-slate-800 transition-all ${
+            focusedIndex === 0 ? 'ring-2 ring-lime-400/80 bg-slate-900' : ''
+          }`}
+        >
           {tabs.map((tab) => (
             <button
               key={tab}
@@ -222,10 +235,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
             >
-              {tab === 'motion' && '🎾 Motion'}
-              {tab === 'graphics' && '🎨 Graphics'}
-              {tab === 'audio' && '🔊 Audio'}
-              {tab === 'controls' && '🎮 Controls'}
+              {tab === 'motion' && strings.motionTab}
+              {tab === 'graphics' && strings.graphicsTab}
+              {tab === 'audio' && strings.audioTab}
+              {tab === 'controls' && strings.controlsTab}
             </button>
           ))}
         </div>
@@ -234,10 +247,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="p-6 overflow-y-auto space-y-4 text-xs text-slate-300 bg-[#0f172a]">
           {activeTab === 'motion' && (
             <div className="space-y-3">
-              {/* Item 0: Grip Calibration */}
+              {/* Item 1: Grip Calibration */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border transition-all ${
-                  focusedIndex === 0
+                  focusedIndex === 1
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
@@ -245,32 +258,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white text-sm">Grip Calibration</span>
                   {calibratedMsg ? (
-                    <span className="text-lime-400 font-mono text-[11px]">✓ Grip Calibrated</span>
+                    <span className="text-lime-400 font-mono text-[11px]">{strings.calibrated}</span>
                   ) : (
                     <span className="text-slate-500 text-[10px]">Press OK / A to Calibrate</span>
                   )}
                 </div>
                 <p className="text-slate-400 leading-relaxed mt-1 text-[11px]">
-                  Hold your phone like a racket handle in your natural relaxed posture, then press Calibrate.
+                  {strings.calibrateDesc}
                 </p>
                 <button
                   onClick={handleCalibrate}
                   className="w-full mt-2.5 py-2.5 rounded-xl bg-lime-400 hover:bg-lime-300 text-slate-950 font-bold transition-colors"
                 >
-                  Calibrate Grip (Neutralize Bias)
+                  {strings.calibrate}
                 </button>
               </div>
 
-              {/* Item 1: Open Motion Lab */}
+              {/* Item 2: Open Motion Lab */}
               <div
                 className={`p-3.5 rounded-2xl bg-[#090d16] border flex items-center justify-between transition-all ${
-                  focusedIndex === 1
+                  focusedIndex === 2
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div>
-                  <div className="font-bold text-white text-xs">Motion Lab Practice Court</div>
+                  <div className="font-bold text-white text-xs">{strings.motionLab}</div>
                   <div className="text-[11px] text-slate-400">Live oscilloscope, swing tests, and diagnostics</div>
                 </div>
                 <button
@@ -281,17 +294,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
 
-              {/* Item 2: Dominant Hand */}
+              {/* Item 3: Dominant Hand */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border space-y-2 transition-all ${
-                  focusedIndex === 2
+                  focusedIndex === 3
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div className="flex justify-between items-center">
-                  <span className="font-bold text-white">Dominant Hand</span>
-                  <span className="text-lime-400 font-bold">{isLeftHanded ? 'Left Hand' : 'Right Hand'}</span>
+                  <span className="font-bold text-white">{strings.dominantHand}</span>
+                  <span className="text-lime-400 font-bold">{isLeftHanded ? strings.leftHand : strings.rightHand}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -302,7 +315,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         : 'bg-slate-900 border-slate-800 text-slate-400'
                     }`}
                   >
-                    Right-Handed
+                    {strings.rightHand}
                   </button>
                   <button
                     onClick={() => handleHandToggle(true)}
@@ -312,21 +325,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         : 'bg-slate-900 border-slate-800 text-slate-400'
                     }`}
                   >
-                    Left-Handed
+                    {strings.leftHand}
                   </button>
                 </div>
               </div>
 
-              {/* Item 3: Sensitivity */}
+              {/* Item 4: Sensitivity */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border space-y-2 transition-all ${
-                  focusedIndex === 3
+                  focusedIndex === 4
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div className="flex justify-between">
-                  <span className="font-bold text-white">Motion Sensitivity (← → to adjust)</span>
+                  <span className="font-bold text-white">{strings.sensitivity} (← → to adjust)</span>
                   <span className="font-mono text-lime-400 font-bold">{motionConfig.sensitivity.toFixed(1)}x</span>
                 </div>
                 <input
@@ -340,16 +353,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
               </div>
 
-              {/* Item 4: Smoothing */}
+              {/* Item 5: Smoothing */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border space-y-2 transition-all ${
-                  focusedIndex === 4
+                  focusedIndex === 5
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div className="flex justify-between">
-                  <span className="font-bold text-white">Tremor Smoothing Filter (← → to adjust)</span>
+                  <span className="font-bold text-white">{strings.smoothing} (← → to adjust)</span>
                   <span className="font-mono text-lime-400 font-bold">{(motionConfig.smoothing * 100).toFixed(0)}%</span>
                 </div>
                 <input
@@ -367,16 +380,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeTab === 'graphics' && (
             <div className="space-y-4">
-              {/* Item 0: Quality Preset (Including 'very_low') */}
+              {/* Item 1: Quality Preset */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
-                  focusedIndex === 0
+                  focusedIndex === 1
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div className="flex justify-between items-center">
-                  <span className="font-bold text-white">Graphics Quality Preset</span>
+                  <span className="font-bold text-white">{strings.quality}</span>
                   <span className="text-lime-400 font-bold uppercase">{graphicsConfig.quality.replace('_', ' ')}</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -401,16 +414,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Item 1: Camera Angle */}
+              {/* Item 2: Camera Angle */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
-                  focusedIndex === 1
+                  focusedIndex === 2
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div className="flex justify-between items-center">
-                  <span className="font-bold text-white">Broadcast Camera Angle</span>
+                  <span className="font-bold text-white">{strings.camera}</span>
                   <span className="text-lime-400 font-bold uppercase">{graphicsConfig.cameraAngle}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
@@ -434,16 +447,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Item 2: Court Surface */}
+              {/* Item 3: Court Surface */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
-                  focusedIndex === 2
+                  focusedIndex === 3
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div className="flex justify-between items-center">
-                  <span className="font-bold text-white">Grand Slam Court Surface</span>
+                  <span className="font-bold text-white">{strings.surface}</span>
                   <span className="text-lime-400 font-bold uppercase">{courtSurface}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
@@ -486,13 +499,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="space-y-4">
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border flex items-center justify-between transition-all ${
-                  focusedIndex === 0
+                  focusedIndex === 1
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
               >
                 <div>
-                  <div className="font-bold text-white">Sound Effects (SFX)</div>
+                  <div className="font-bold text-white">{strings.soundSfx}</div>
                   <div className="text-slate-400 text-[11px]">Racket strike, ball bounce, crowd cheering</div>
                 </div>
                 <button
@@ -505,7 +518,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     soundMuted ? 'bg-rose-900 text-rose-200' : 'bg-lime-400 text-slate-950'
                   }`}
                 >
-                  {soundMuted ? 'Muted' : 'Enabled'}
+                  {soundMuted ? strings.muted : strings.enabled}
                 </button>
               </div>
             </div>
@@ -547,10 +560,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Footer with Focus Save & Close button */}
         <div className="p-4 bg-[#090d16] border-t border-slate-800 flex items-center justify-between">
           <div className="text-[11px] text-slate-400 flex items-center gap-3">
-            <span><strong>↑ ↓</strong> Navigate</span>
-            <span><strong>← →</strong> Adjust / Switch</span>
-            <span><strong>OK / A</strong> Select</span>
-            <span><strong>Esc / B</strong> Close</span>
+            <span><strong>↑ ↓</strong> {strings.navigateHint}</span>
+            <span><strong>← →</strong> {strings.adjustHint}</span>
+            <span><strong>OK / A</strong> {strings.selectHint}</span>
+            <span><strong>Esc / B</strong> {strings.backHint}</span>
           </div>
 
           <button
@@ -561,7 +574,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 : 'bg-lime-400 text-slate-950 hover:bg-lime-300'
             }`}
           >
-            Save &amp; Close
+            {strings.saveClose}
           </button>
         </div>
       </div>
