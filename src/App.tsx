@@ -95,6 +95,8 @@ export default function App() {
   screenRef.current = currentScreen;
   const isPausedRef = useRef<boolean>(isPaused);
   isPausedRef.current = isPaused;
+  const isSettingsOpenRef = useRef<boolean>(isSettingsOpen);
+  isSettingsOpenRef.current = isSettingsOpen;
 
   // 1. Initialize MyPC Bridge & 3D Three.js Viewport
   useEffect(() => {
@@ -119,16 +121,16 @@ export default function App() {
 
     // Handle Input actions (TV remote & keyboard)
     const unsubAction = mypcBridge.addActionListener((action, pressed, _repeat, dev) => {
-      const engine = engineRef.current;
-      if (!engine) {
-        if (action === 'cancel' && pressed) {
-          setIsSettingsOpen(false);
-        }
+      // When a modal or pause menu is active, let the modal handle input exclusively
+      if (isSettingsOpenRef.current || isPausedRef.current || screenRef.current !== 'playing') {
         return;
       }
 
+      const engine = engineRef.current;
+      if (!engine) return;
+
       if (action === 'cancel' && pressed) {
-        setIsPaused((p) => !p);
+        setIsPaused(true);
         return;
       }
 
@@ -149,8 +151,8 @@ export default function App() {
       if (dev === 'keys2') {
         if (action === 'left') engine.p2Input.x = pressed ? -1 : 0;
         else if (action === 'right') engine.p2Input.x = pressed ? 1 : 0;
-        else if (action === 'up') engine.p2Input.z = pressed ? 1 : 0;
-        else if (action === 'down') engine.p2Input.z = pressed ? -1 : 0;
+        else if (action === 'up') engine.p2Input.z = pressed ? -1 : 0;
+        else if (action === 'down') engine.p2Input.z = pressed ? 1 : 0;
         else if (action === 'confirm' && pressed) {
           engine.handleButtonHit(2, 'FOREHAND', 3);
         }
@@ -159,6 +161,18 @@ export default function App() {
 
     // Handle Gamepad buttons
     const unsubButton = mypcBridge.addGamepadButtonListener((index, pressed, _val, dev, _name) => {
+      if (index === 9 || index === 8) {
+        // Start / Select button toggles pause menu
+        if (pressed && screenRef.current === 'playing' && !isSettingsOpenRef.current) {
+          setIsPaused((p) => !p);
+        }
+        return;
+      }
+
+      if (isSettingsOpenRef.current || isPausedRef.current || screenRef.current !== 'playing') {
+        return;
+      }
+
       const engine = engineRef.current;
       if (!engine) return;
 
@@ -174,9 +188,6 @@ export default function App() {
         } else if (index === 3) {
           // Y: Power Smash
           engine.handleButtonHit(playerIdx, 'SMASH', 5);
-        } else if (index === 9 || index === 8) {
-          // Start / Select
-          setIsPaused((p) => !p);
         }
       }
     });
@@ -219,8 +230,10 @@ export default function App() {
         // Slow cinematic camera orbit around stadium
         const angle = time * 0.0003;
         scene.ballMesh.position.set(0, 0.8 + Math.sin(time * 0.003) * 0.4, 0);
-        scene.player1.root.position.set(Math.sin(angle) * 3, 0, 11);
-        scene.player2.root.position.set(-Math.sin(angle) * 3, 0, -11);
+        scene.player1.root.position.set(Math.sin(angle) * 2.5, 0, 11.5);
+        scene.player2.root.position.set(-Math.sin(angle) * 2.5, 0, -11.5);
+        scene.updatePlayerAnimation(scene.player1, dt);
+        scene.updatePlayerAnimation(scene.player2, dt);
         scene.render(dt);
       } else if (screenRef.current === 'playing' && !isPausedRef.current) {
         if (engineRef.current) {

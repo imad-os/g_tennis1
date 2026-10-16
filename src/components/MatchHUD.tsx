@@ -41,7 +41,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
       {/* Top Bar: Official Grand Slam Scoreboard */}
       <div className="flex items-start justify-between w-full max-w-4xl mx-auto">
         {/* Modern Broadcast Score Cluster */}
-        <div className="bg-slate-950/85 border border-slate-800/80 rounded-2xl shadow-2xl backdrop-blur-md overflow-hidden flex divide-x divide-slate-800 text-xs md:text-sm">
+        <div className="bg-[#0f172a] border-2 border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex divide-x divide-slate-800 text-xs md:text-sm">
           {/* Player 1 Row */}
           <div className="px-4 py-2.5 flex items-center gap-3">
             <div className="w-2.5 h-2.5 rounded-full bg-sky-400" />
@@ -91,7 +91,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
         {/* Rally & Pause Button */}
         <div className="flex items-center gap-3">
           {rallyCount > 1 && (
-            <div className="bg-slate-950/80 border border-slate-800/80 px-3 py-1.5 rounded-xl text-xs font-mono tabular-nums text-lime-400 flex items-center gap-1.5 shadow-lg">
+            <div className="bg-[#0f172a] border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-mono tabular-nums text-lime-400 flex items-center gap-1.5 shadow-lg">
               <span className="text-slate-400">RALLY:</span>
               <span className="font-bold text-base">{rallyCount}</span>
             </div>
@@ -99,7 +99,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
 
           <button
             onClick={onPauseClick}
-            className="pointer-events-auto px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 text-xs font-semibold backdrop-blur-md transition-colors"
+            className="pointer-events-auto px-3.5 py-1.5 rounded-xl bg-[#0f172a] hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-semibold transition-colors"
           >
             Pause (Esc)
           </button>
@@ -109,7 +109,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
       {/* Center Dynamic Shot Feedback Toast */}
       {currentShotToast && (
         <div className="self-center my-auto transition-all duration-150 animate-bounce">
-          <div className="px-6 py-3 rounded-2xl bg-slate-950/90 border-2 border-lime-400 shadow-2xl shadow-lime-400/20 backdrop-blur-md flex items-center gap-3">
+          <div className="px-6 py-3 rounded-2xl bg-[#0f172a] border-2 border-lime-400 shadow-2xl flex items-center gap-3">
             <span className="text-xl">
               {currentShotToast.type === 'FOREHAND'
                 ? '🎾'

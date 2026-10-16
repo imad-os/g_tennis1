@@ -318,8 +318,8 @@ export class TennisMatchEngine {
         sound.playBallBounce(this.courtSurface, Math.abs(this.ballVel.y) / 8);
         this.scene3D.triggerImpactPuff(this.ballPos, 0xffffff);
 
-        // Check if inside court boundary
-        const isWithinCourtX = Math.abs(this.ballPos.x) <= TennisScene3D.COURT_WIDTH / 2;
+        // Check if inside singles court boundary (8.23m wide by 23.77m long)
+        const isWithinCourtX = Math.abs(this.ballPos.x) <= TennisScene3D.SINGLES_WIDTH / 2;
         const isWithinCourtZ = Math.abs(this.ballPos.z) <= TennisScene3D.COURT_LENGTH / 2;
 
         if (!isWithinCourtX || !isWithinCourtZ) {

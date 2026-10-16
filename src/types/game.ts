@@ -48,7 +48,7 @@ export interface MotionConfig {
 }
 
 export interface GraphicsConfig {
-  quality: 'low' | 'mid' | 'high';
+  quality: 'very_low' | 'low' | 'mid' | 'high';
   cameraAngle: 'broadcast' | 'chase' | 'overhead';
   spectators: boolean;
   shadows: boolean;

@@ -74,10 +74,10 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 flex flex-col justify-between p-8 md:p-12 z-20 pointer-events-auto bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent">
+    <div className="absolute inset-0 flex flex-col justify-between p-8 md:p-12 z-20 pointer-events-auto">
       {/* Top Header & Brand */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 bg-[#0f172a] p-3 rounded-2xl border border-slate-800">
           <div className="w-10 h-10 rounded-xl bg-lime-400 text-slate-950 flex items-center justify-center font-black text-xl shadow-lg shadow-lime-400/20">
             🎾
           </div>
@@ -92,11 +92,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         </div>
 
         {/* Controller Status Indicator */}
-        <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900/80 border border-slate-700/60 backdrop-blur-md">
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0f172a] border border-slate-700">
           <span className="text-xs font-semibold text-slate-300">Controller:</span>
           {phoneConnected ? (
             <span className="text-xs font-bold text-lime-400 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-lime-400 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-lime-400" />
               Phone Motion Active
             </span>
           ) : (
