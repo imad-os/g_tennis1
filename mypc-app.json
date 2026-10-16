@@ -1,0 +1,16 @@
+{
+  "mypc": 1,
+  "id": "grand-slam-tennis",
+  "name": "Grand Slam 3D Tennis",
+  "description": "Low-poly 3D tennis with phone motion swings, gamepad controls, and local multiplayer.",
+  "type": "game",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "scores": true,
+  "config": {
+    "difficulty": "normal",
+    "motionSensitivity": 1.0,
+    "smoothing": 0.65
+  }
+}

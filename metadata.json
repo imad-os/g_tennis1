@@ -1,0 +1,6 @@
+{
+  "name": "Grand Slam 3D Tennis",
+  "description": "Low-poly 3D motion tennis game for My PC and browsers with phone swing recognition, gamepad controls, and local multiplayer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
