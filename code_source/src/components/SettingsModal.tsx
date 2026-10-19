@@ -17,6 +17,7 @@ interface SettingsModalProps {
   graphicsConfig: GraphicsConfig;
   onChangeGraphicsConfig: (cfg: Partial<GraphicsConfig>) => void;
   onOpenMotionLab: () => void;
+  onOpenGamepadMapping?: () => void;
 }
 
 type TabKey = 'motion' | 'graphics' | 'audio' | 'controls';
@@ -28,6 +29,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   graphicsConfig,
   onChangeGraphicsConfig,
   onOpenMotionLab,
+  onOpenGamepadMapping,
 }) => {
   const strings = t();
   const tabs: TabKey[] = ['motion', 'graphics', 'audio', 'controls'];
@@ -45,9 +47,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const getTabItemCount = (tab: TabKey): number => {
     switch (tab) {
       case 'motion': return 7; // 0: Tabs, 1: Calibrate, 2: Motion Lab, 3: Right/Left Hand, 4: Sensitivity, 5: Smoothing, 6: Close
-      case 'graphics': return 5; // 0: Tabs, 1: Quality, 2: Camera, 3: Court, 4: Close
+      case 'graphics': return 10; // 0: Tabs, 1: Quality, 2: Camera, 3: Height, 4: Zoom, 5: VFX, 6: Court, 7: Render Resolution, 8: Scaling Filter, 9: Close
       case 'audio': return 3; // 0: Tabs, 1: Mute/Unmute, 2: Close
-      case 'controls': return 2; // 0: Tabs, 1: Close
+      case 'controls': return 3; // 0: Tabs, 1: Gauge Speed, 2: Close
     }
   };
 
@@ -130,22 +132,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } else if (activeTab === 'graphics') {
       if (focusedIndex === 1) {
         // Quality cycle
-        const qualities: GraphicsConfig['quality'][] = ['very_low', 'low', 'mid', 'high'];
+        const qualities: GraphicsConfig['quality'][] = ['very_low', 'low', 'mid', 'high', 'fancy'];
         const idx = qualities.indexOf(graphicsConfig.quality);
         const next = qualities[(idx + (toRight ? 1 : -1) + qualities.length) % qualities.length];
         onChangeGraphicsConfig({ quality: next });
       } else if (focusedIndex === 2) {
         // Camera cycle
-        const cams: GraphicsConfig['cameraAngle'][] = ['broadcast', 'chase', 'overhead'];
+        const cams: GraphicsConfig['cameraAngle'][] = ['chase', 'mount', 'broadcast', 'baseline', 'overhead'];
         const idx = cams.indexOf(graphicsConfig.cameraAngle);
         const next = cams[(idx + (toRight ? 1 : -1) + cams.length) % cams.length];
         onChangeGraphicsConfig({ cameraAngle: next });
       } else if (focusedIndex === 3) {
+        // Camera Height slider (1m to 50m, default 10m)
+        const step = toRight ? 2 : -2;
+        const currentH = graphicsConfig.cameraHeight || 10;
+        const nextH = Math.max(1, Math.min(50, currentH + step));
+        onChangeGraphicsConfig({ cameraHeight: nextH });
+      } else if (focusedIndex === 4) {
+        // Camera Zoom slider
+        const step = toRight ? 0.05 : -0.05;
+        const currentZoom = graphicsConfig.cameraZoom || 1.0;
+        const nextZoom = Math.max(0.6, Math.min(1.7, currentZoom + step));
+        onChangeGraphicsConfig({ cameraZoom: nextZoom });
+      } else if (focusedIndex === 5) {
+        // Visual Effects cycle (low, medium, high)
+        const vfxList: GraphicsConfig['vfxLevel'][] = ['low', 'medium', 'high'];
+        const currentVfx = graphicsConfig.vfxLevel || 'high';
+        const idx = vfxList.indexOf(currentVfx);
+        const nextVfx = vfxList[(idx + (toRight ? 1 : -1) + vfxList.length) % vfxList.length];
+        onChangeGraphicsConfig({ vfxLevel: nextVfx });
+      } else if (focusedIndex === 6) {
         // Court surface cycle
         const courts: CourtSurface[] = ['hard', 'clay', 'grass'];
         const idx = courts.indexOf(courtSurface);
         const next = courts[(idx + (toRight ? 1 : -1) + courts.length) % courts.length];
         onChangeCourtSurface(next);
+      } else if (focusedIndex === 7) {
+        // Render Resolution cycle (480p, 720p, 1080p, auto)
+        const resolutions: GraphicsConfig['renderResolution'][] = ['480p', '720p', '1080p', 'auto'];
+        const currentRes = graphicsConfig.renderResolution || 'auto';
+        const idx = resolutions.indexOf(currentRes);
+        const nextRes = resolutions[(idx + (toRight ? 1 : -1) + resolutions.length) % resolutions.length];
+        onChangeGraphicsConfig({ renderResolution: nextRes });
+      } else if (focusedIndex === 8) {
+        // Display Scaling Filter cycle (smooth, pixelated)
+        const filters: GraphicsConfig['scalingFilter'][] = ['smooth', 'pixelated'];
+        const currentFilter = graphicsConfig.scalingFilter || 'smooth';
+        const idx = filters.indexOf(currentFilter);
+        const nextFilter = filters[(idx + (toRight ? 1 : -1) + filters.length) % filters.length];
+        onChangeGraphicsConfig({ scalingFilter: nextFilter });
+      }
+    } else if (activeTab === 'controls') {
+      if (focusedIndex === 1) {
+        const speeds: GraphicsConfig['gaugeSpeed'][] = ['relaxed', 'balanced', 'fast'];
+        const current = graphicsConfig.gaugeSpeed || 'balanced';
+        const idx = speeds.indexOf(current);
+        const next = speeds[(idx + (toRight ? 1 : -1) + speeds.length) % speeds.length];
+        onChangeGraphicsConfig({ gaugeSpeed: next });
       }
     }
   };
@@ -168,6 +211,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         const next = !soundMuted;
         setSoundMuted(next);
         sound.setMuted(next);
+      }
+    } else if (activeTab === 'controls') {
+      if (focusedIndex === 1) {
+        handleHorizontalNav(true);
       }
     }
   };
@@ -392,19 +439,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="font-bold text-white">{strings.quality}</span>
                   <span className="text-lime-400 font-bold uppercase">{graphicsConfig.quality.replace('_', ' ')}</span>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                   {[
-                    { id: 'very_low', label: 'Very Low (Ultra-Fast)' },
+                    { id: 'very_low', label: 'Very Low (Fast)' },
                     { id: 'low', label: 'Low (TV 60fps)' },
                     { id: 'mid', label: 'Mid (Balanced)' },
                     { id: 'high', label: 'High (Detail)' },
+                    { id: 'fancy', label: 'Fancy (Round & Hi-Poly)' },
                   ].map((q) => (
                     <button
                       key={q.id}
                       onClick={() => onChangeGraphicsConfig({ quality: q.id as GraphicsConfig['quality'] })}
                       className={`py-2 px-1 text-[11px] rounded-xl font-bold border transition-colors ${
                         graphicsConfig.quality === q.id
-                          ? 'bg-lime-400 text-slate-950 border-lime-400'
+                          ? 'bg-lime-400 text-slate-950 border-lime-400 shadow-md shadow-lime-400/20'
                           : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
                       }`}
                     >
@@ -426,19 +474,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="font-bold text-white">{strings.camera}</span>
                   <span className="text-lime-400 font-bold uppercase">{graphicsConfig.cameraAngle}</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                   {[
-                    { id: 'broadcast', label: 'TV Broadcast' },
-                    { id: 'chase', label: 'Chase Cam' },
+                    { id: 'chase', label: 'Follow' },
+                    { id: 'mount', label: 'Mount POV' },
+                    { id: 'broadcast', label: 'Broadcast' },
+                    { id: 'baseline', label: 'Baseline' },
                     { id: 'overhead', label: 'Overhead' },
                   ].map((cam) => (
                     <button
                       key={cam.id}
                       onClick={() => onChangeGraphicsConfig({ cameraAngle: cam.id as GraphicsConfig['cameraAngle'] })}
-                      className={`py-2 rounded-xl font-bold border text-xs ${
+                      className={`py-2 px-1 text-[11px] rounded-xl font-bold border transition-colors ${
                         graphicsConfig.cameraAngle === cam.id
                           ? 'bg-lime-400 text-slate-950 border-lime-400'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
                       }`}
                     >
                       {cam.label}
@@ -447,10 +497,109 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Item 3: Court Surface */}
+              {/* Item 3: Mount Camera Height Slider (1m to 50m, default 10m) */}
               <div
                 className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
                   focusedIndex === 3
+                    ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
+                    : 'border-slate-800'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-white">
+                    📐 Mount Camera Height (1m–50m, Default 10m)
+                  </span>
+                  <span className="font-mono text-lime-400 font-bold">
+                    {(graphicsConfig.cameraHeight || 10).toFixed(0)} meters
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400">1m (Player Level)</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="50"
+                    step="1"
+                    value={graphicsConfig.cameraHeight || 10}
+                    onChange={(e) => onChangeGraphicsConfig({ cameraHeight: parseFloat(e.target.value) })}
+                    className="w-full accent-lime-400 cursor-pointer"
+                  />
+                  <span className="text-xs text-slate-400">50m (High Stadium Stand)</span>
+                </div>
+              </div>
+
+              {/* Item 4: Camera Zoom Slider */}
+              <div
+                className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
+                  focusedIndex === 4
+                    ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
+                    : 'border-slate-800'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-white">Camera Zoom Distance (← → to adjust)</span>
+                  <span className="font-mono text-lime-400 font-bold">
+                    {((graphicsConfig.cameraZoom || 1.0) * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400">Close Up</span>
+                  <input
+                    type="range"
+                    min="0.6"
+                    max="1.7"
+                    step="0.05"
+                    value={graphicsConfig.cameraZoom || 1.0}
+                    onChange={(e) => onChangeGraphicsConfig({ cameraZoom: parseFloat(e.target.value) })}
+                    className="w-full accent-lime-400 cursor-pointer"
+                  />
+                  <span className="text-xs text-slate-400">Wide View</span>
+                </div>
+              </div>
+
+              {/* Item 5: Visual Effects (Low: remove all, Medium: keep half, High: keep all) */}
+              <div
+                className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
+                  focusedIndex === 5
+                    ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
+                    : 'border-slate-800'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-white">✨ Visual Effects (Ball Hit Sprinkles &amp; Dust)</span>
+                  <span className="text-lime-400 font-bold uppercase">{graphicsConfig.vfxLevel || 'high'}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'low', label: 'Low', sub: 'Remove all sprinkles (0%)' },
+                    { id: 'medium', label: 'Medium', sub: 'Keep half sprinkles (50%)' },
+                    { id: 'high', label: 'High', sub: 'Keep all visual effects (100%)' },
+                  ].map((v) => {
+                    const isCur = (graphicsConfig.vfxLevel || 'high') === v.id;
+                    return (
+                      <button
+                        key={v.id}
+                        onClick={() => onChangeGraphicsConfig({ vfxLevel: v.id as GraphicsConfig['vfxLevel'] })}
+                        className={`py-2 px-2 rounded-xl font-bold border transition-colors text-center ${
+                          isCur
+                            ? 'bg-lime-400 text-slate-950 border-lime-400 shadow-md shadow-lime-400/20'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <div className="text-xs">{v.label}</div>
+                        <div className={`text-[10px] ${isCur ? 'text-slate-950/80' : 'text-slate-500'}`}>
+                          {v.sub}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Item 6: Court Surface */}
+              <div
+                className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
+                  focusedIndex === 6
                     ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
                     : 'border-slate-800'
                 }`}
@@ -492,6 +641,94 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Item 7: Render Resolution (480p, 720p, 1080p, Auto) */}
+              <div
+                className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
+                  focusedIndex === 7
+                    ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
+                    : 'border-slate-800'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <div className="flex flex-col">
+                    <span className="font-bold text-white">🖥️ Render Resolution (Full-Screen Upscaled)</span>
+                    <span className="text-[11px] text-slate-400">Lower resolution renders faster on TV while staying full screen</span>
+                  </div>
+                  <span className="text-lime-400 font-bold uppercase font-mono">
+                    {graphicsConfig.renderResolution || 'auto'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {[
+                    { id: '480p', label: '480p SD', desc: 'Max FPS · Lowest GPU load' },
+                    { id: '720p', label: '720p HD', desc: 'Balanced · Smooth 60 FPS' },
+                    { id: '1080p', label: '1080p FHD', desc: 'Sharp · High fidelity' },
+                    { id: 'auto', label: 'Native Auto', desc: 'Matches display 1:1' },
+                  ].map((r) => {
+                    const isCur = (graphicsConfig.renderResolution || 'auto') === r.id;
+                    return (
+                      <button
+                        key={r.id}
+                        onClick={() => onChangeGraphicsConfig({ renderResolution: r.id as any })}
+                        className={`py-2 px-2 rounded-xl font-bold border transition-colors text-center cursor-pointer ${
+                          isCur
+                            ? 'bg-lime-400 text-slate-950 border-lime-400 shadow-md shadow-lime-400/20'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <div className="text-xs">{r.label}</div>
+                        <div className={`text-[10px] ${isCur ? 'text-slate-950/80 font-medium' : 'text-slate-500'}`}>
+                          {r.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Item 8: Full-Screen Scaling Filter (Smooth Bilinear vs Crisp Pixelated) */}
+              <div
+                className={`p-4 rounded-2xl bg-[#090d16] border space-y-2.5 transition-all ${
+                  focusedIndex === 8
+                    ? 'border-sky-400 ring-4 ring-sky-400/40 scale-[1.01]'
+                    : 'border-slate-800'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <div className="flex flex-col">
+                    <span className="font-bold text-white">📺 Full-Screen Display Scaling Filter</span>
+                    <span className="text-[11px] text-slate-400">Controls how your TV and GPU upscale lower render resolutions</span>
+                  </div>
+                  <span className="text-lime-400 font-bold uppercase font-mono">
+                    {graphicsConfig.scalingFilter || 'smooth'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'smooth', label: 'Smooth (Bilinear)', desc: 'Standard TV hardware smoothing filter' },
+                    { id: 'pixelated', label: 'Crisp Pixelated', desc: 'Sharp retro integer scaling' },
+                  ].map((f) => {
+                    const isCur = (graphicsConfig.scalingFilter || 'smooth') === f.id;
+                    return (
+                      <button
+                        key={f.id}
+                        onClick={() => onChangeGraphicsConfig({ scalingFilter: f.id as any })}
+                        className={`py-2 px-3 rounded-xl font-bold border transition-colors text-center cursor-pointer ${
+                          isCur
+                            ? 'bg-lime-400 text-slate-950 border-lime-400 shadow-md shadow-lime-400/20'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <div className="text-xs">{f.label}</div>
+                        <div className={`text-[10px] ${isCur ? 'text-slate-950/80 font-medium' : 'text-slate-500'}`}>
+                          {f.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
@@ -526,6 +763,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeTab === 'controls' && (
             <div className="space-y-3">
+              {/* Power Gauge Speed Setting */}
+              <div
+                className={`p-4 rounded-2xl bg-[#090d16] border space-y-2 transition-all ${
+                  focusedIndex === 1 ? 'border-lime-400 ring-2 ring-lime-400/30' : 'border-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-lime-400">⚡ Power Gauge Speed (Hold-to-Charge)</span>
+                  <span className="text-xs text-sky-400 font-mono font-semibold">
+                    {graphicsConfig.gaugeSpeed === 'relaxed'
+                      ? 'Relaxed (1.8s sweep)'
+                      : graphicsConfig.gaugeSpeed === 'fast'
+                      ? 'Competitive (0.8s sweep)'
+                      : 'Balanced (1.2s sweep)'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'relaxed', label: 'Relaxed (1.8s)', sub: 'Easy timing' },
+                    { id: 'balanced', label: 'Balanced (1.2s)', sub: 'Standard TV' },
+                    { id: 'fast', label: 'Fast (0.8s)', sub: 'Quick reflex' },
+                  ].map((speed) => {
+                    const isCur = (graphicsConfig.gaugeSpeed || 'balanced') === speed.id;
+                    return (
+                      <button
+                        key={speed.id}
+                        onClick={() => onChangeGraphicsConfig({ gaugeSpeed: speed.id as any })}
+                        className={`p-2.5 rounded-xl border text-center transition-all ${
+                          isCur
+                            ? 'bg-lime-400 text-slate-950 border-lime-400 font-bold shadow-md shadow-lime-400/20'
+                            : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">{speed.label}</div>
+                        <div className={`text-[10px] ${isCur ? 'text-slate-900/80 font-medium' : 'text-slate-400'}`}>
+                          {speed.sub}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="p-4 rounded-2xl bg-[#090d16] border border-slate-800 space-y-1">
                 <span className="font-bold text-lime-400">📱 Phone Motion Controller (My PC SDK)</span>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
@@ -533,14 +813,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </p>
               </div>
 
-              <div className="p-4 rounded-2xl bg-[#090d16] border border-slate-800 space-y-1">
-                <span className="font-bold text-sky-400">🎮 Game Controller / Gamepad</span>
+              <div className="p-4 rounded-2xl bg-[#090d16] border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-sky-400">🎮 Game Controller / Gamepad</span>
+                  {onOpenGamepadMapping && (
+                    <button
+                      onClick={onOpenGamepadMapping}
+                      className="px-3 py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                    >
+                      <span>🎮</span> View Controller Mapping &amp; Tester
+                    </button>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-1.5 text-slate-300 font-mono text-[11px]">
                   <div>Left Stick / D-Pad: Move Player</div>
                   <div>Button A (Cross): Drive Hit</div>
                   <div>Button B (Circle): Slice</div>
-                  <div>Button Y (Triangle): Smash</div>
-                  <div>LB / RB: Switch Tabs</div>
+                  <div>Button X (Square): Topspin</div>
+                  <div>Button Y (Triangle): Smash / Lob</div>
+                  <div>RB / R1: Drop Shot</div>
                   <div>Start / Select: Menu</div>
                 </div>
               </div>

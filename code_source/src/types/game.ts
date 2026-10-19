@@ -5,15 +5,23 @@
 
 export type CourtSurface = 'hard' | 'clay' | 'grass';
 
-export type GameMode = 'ai' | 'local2p' | 'motion_lab';
+export type GameMode = 'ai' | 'local2p' | 'doubles_ai' | 'doubles_local' | 'motion_lab';
 
 export type AIDifficulty = 'amateur' | 'pro' | 'master';
 
 export type ControllerType = 'motion' | 'gamepad' | 'keyboard';
 
-export type ShotType = 'FOREHAND' | 'BACKHAND' | 'SERVE' | 'SMASH' | 'LOB';
+export type ShotType = 'FOREHAND' | 'BACKHAND' | 'SERVE' | 'SMASH' | 'LOB' | 'DROP';
 
 export type PowerLevel = 1 | 2 | 3 | 4 | 5;
+
+export type CameraAngle = 'chase' | 'broadcast' | 'baseline' | 'overhead' | 'mount';
+
+export type VFXLevel = 'low' | 'medium' | 'high';
+
+export type RenderResolution = '480p' | '720p' | '1080p' | 'auto';
+
+export type ScalingFilter = 'smooth' | 'pixelated';
 
 export interface SwingDetectionEvent {
   type: ShotType;
@@ -47,12 +55,35 @@ export interface MotionConfig {
   isCalibrated: boolean;
 }
 
+export type GaugeSpeed = 'relaxed' | 'balanced' | 'fast';
+
+export interface ChargingState {
+  playerId: 1 | 2;
+  isCharging: boolean;
+  progress: number; // 0.0 to 1.0 (oscillates up and down)
+  rawPower: number; // 0.0 to 1.0
+  powerLevel: PowerLevel; // 1 to 5
+  shotType: ShotType;
+  safeZoneMin: number; // fraction 0.0 to 1.0
+  safeZoneMax: number; // fraction 0.0 to 1.0
+  isSafe: boolean;
+  predictedLanding?: { x: number; z: number };
+  netClearance?: number;
+  screenPos?: { x: number; y: number };
+}
+
 export interface GraphicsConfig {
-  quality: 'very_low' | 'low' | 'mid' | 'high';
-  cameraAngle: 'broadcast' | 'chase' | 'overhead';
+  quality: 'very_low' | 'low' | 'mid' | 'high' | 'fancy';
+  cameraAngle: CameraAngle;
+  cameraZoom: number; // 0.6 (close/immersive) to 1.8 (far/tactical)
+  cameraHeight: number; // 1m to 50m (default 10m)
+  vfxLevel: VFXLevel; // 'low' (none) | 'medium' (half) | 'high' (all)
   spectators: boolean;
   shadows: boolean;
   pixelRatio: number;
+  gaugeSpeed: GaugeSpeed;
+  renderResolution: RenderResolution;
+  scalingFilter: ScalingFilter;
 }
 
 export interface AudioConfig {
@@ -63,11 +94,12 @@ export interface AudioConfig {
 }
 
 export interface PlayerConfig {
-  id: 1 | 2;
+  id: 1 | 2 | 3 | 4;
+  team: 1 | 2;
   name: string;
   isAI: boolean;
   controller: ControllerType;
-  padId?: string; // 'pad0' | 'pad1' etc.
+  padIndex?: number; // 0, 1, 2, 3
   difficulty?: AIDifficulty;
 }
 

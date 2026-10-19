@@ -4,19 +4,38 @@
  */
 
 import * as THREE from 'three';
-import { CourtSurface, GraphicsConfig, ShotType } from '../types/game';
+import { CameraAngle, CourtSurface, GraphicsConfig, RenderResolution, ScalingFilter, ShotType } from '../types/game';
+import { ITF_COURT, COURT_SURFACES } from './tennisPhysics';
 
-// Pre-allocated math helpers to ensure zero GC in animation loop
+// Pre-allocated math objects to avoid garbage collection spikes in 60 FPS TV loop
 const _vec3Target = new THREE.Vector3();
+const _camDesiredPos = new THREE.Vector3();
+const _camLookAt = new THREE.Vector3();
 
 export interface Player3DModel {
   root: THREE.Group;
+  pelvis: THREE.Group;
   torso: THREE.Mesh;
   head: THREE.Group;
-  rightArm: THREE.Group;
-  leftArm: THREE.Group;
-  rightLeg: THREE.Group;
-  leftLeg: THREE.Group;
+  headMesh: THREE.Mesh;
+  rightShoulder: THREE.Group;
+  rightUpperArm: THREE.Mesh;
+  rightForearmGroup: THREE.Group;
+  rightForearm: THREE.Mesh;
+  leftShoulder: THREE.Group;
+  leftUpperArm: THREE.Mesh;
+  leftForearmGroup: THREE.Group;
+  leftForearm: THREE.Mesh;
+  rightHip: THREE.Group;
+  rightThigh: THREE.Mesh;
+  rightKnee: THREE.Group;
+  rightShin: THREE.Mesh;
+  rightFoot: THREE.Mesh;
+  leftHip: THREE.Group;
+  leftThigh: THREE.Mesh;
+  leftKnee: THREE.Group;
+  leftShin: THREE.Mesh;
+  leftFoot: THREE.Mesh;
   racket: THREE.Group;
   shadow: THREE.Mesh;
   animState: {
@@ -24,7 +43,102 @@ export interface Player3DModel {
     swingType: ShotType | null;
     runCycle: number;
     isRunning: boolean;
+    idleTimer: number;
+    isCharging: boolean;
+    chargingShot: ShotType | null;
+    chargeProgress: number;
   };
+}
+
+export interface QualityGeometryConfig {
+  limbRadialSegments: number;
+  headSegmentsW: number;
+  headSegmentsH: number;
+  torsoSegments: number;
+  racketTorusTubular: number;
+  racketTorusRadial: number;
+  ballSegmentsW: number;
+  ballSegmentsH: number;
+  postSegments: number;
+  shadowSegments: number;
+  stadiumCornerSegments: number;
+}
+
+export function getQualityGeomConfig(quality: GraphicsConfig['quality']): QualityGeometryConfig {
+  switch (quality) {
+    case 'fancy':
+      // High-polygon round geometry with smooth curved bevels
+      return {
+        limbRadialSegments: 32,
+        headSegmentsW: 32,
+        headSegmentsH: 24,
+        torsoSegments: 24,
+        racketTorusTubular: 16,
+        racketTorusRadial: 36,
+        ballSegmentsW: 36,
+        ballSegmentsH: 32,
+        postSegments: 32,
+        shadowSegments: 36,
+        stadiumCornerSegments: 48,
+      };
+    case 'high':
+      return {
+        limbRadialSegments: 18,
+        headSegmentsW: 20,
+        headSegmentsH: 16,
+        torsoSegments: 16,
+        racketTorusTubular: 12,
+        racketTorusRadial: 24,
+        ballSegmentsW: 24,
+        ballSegmentsH: 20,
+        postSegments: 16,
+        shadowSegments: 24,
+        stadiumCornerSegments: 24,
+      };
+    case 'mid':
+      return {
+        limbRadialSegments: 12,
+        headSegmentsW: 14,
+        headSegmentsH: 12,
+        torsoSegments: 10,
+        racketTorusTubular: 8,
+        racketTorusRadial: 16,
+        ballSegmentsW: 16,
+        ballSegmentsH: 12,
+        postSegments: 10,
+        shadowSegments: 16,
+        stadiumCornerSegments: 16,
+      };
+    case 'low':
+      return {
+        limbRadialSegments: 7, // visible hexagonal / heptagonal facets
+        headSegmentsW: 10,
+        headSegmentsH: 8,
+        torsoSegments: 7,
+        racketTorusTubular: 6,
+        racketTorusRadial: 12,
+        ballSegmentsW: 10,
+        ballSegmentsH: 8,
+        postSegments: 6,
+        shadowSegments: 12,
+        stadiumCornerSegments: 8,
+      };
+    case 'very_low':
+    default:
+      return {
+        limbRadialSegments: 5, // low-poly angular prism
+        headSegmentsW: 6,
+        headSegmentsH: 6,
+        torsoSegments: 5,
+        racketTorusTubular: 4,
+        racketTorusRadial: 8,
+        ballSegmentsW: 8,
+        ballSegmentsH: 6,
+        postSegments: 4,
+        shadowSegments: 8,
+        stadiumCornerSegments: 6,
+      };
+  }
 }
 
 export class TennisScene3D {
@@ -40,8 +154,13 @@ export class TennisScene3D {
   private netGroup!: THREE.Group;
   private stadiumGroup!: THREE.Group;
 
-  public player1!: Player3DModel;
-  public player2!: Player3DModel;
+  // 4 Players supported for 1v1 and 2v2 doubles modes
+  public player1!: Player3DModel; // Team 1 Server / Baseline
+  public player2!: Player3DModel; // Team 2 Receiver / Baseline
+  public player3!: Player3DModel; // Team 1 Partner at net
+  public player4!: Player3DModel; // Team 2 Partner at net
+  public isDoubles: boolean = false;
+
   public ballMesh!: THREE.Mesh;
   public ballShadow!: THREE.Mesh;
   public impactParticles: THREE.Points[] = [];
@@ -50,490 +169,121 @@ export class TennisScene3D {
   private activeSurface: CourtSurface = 'hard';
   private graphicsConfig: GraphicsConfig = {
     quality: 'mid',
-    cameraAngle: 'broadcast',
+    cameraAngle: 'chase',
+    cameraZoom: 1.0,
+    cameraHeight: 10.0,
+    vfxLevel: 'high',
     spectators: true,
-    shadows: false, // Performance first on TVs: fast procedural contact shadows used instead
-    pixelRatio: 1.0, // Fixed 1x logical pixel ratio for smooth 60fps on TV GPUs
+    shadows: false,
+    pixelRatio: 1.0,
+    gaugeSpeed: 'balanced',
+    renderResolution: 'auto',
+    scalingFilter: 'smooth',
   };
-
-  // Official Court Dimensions
-  public static readonly COURT_LENGTH = 23.77;
-  public static readonly COURT_WIDTH = 10.97; // Full court (with doubles alleys)
-  public static readonly SINGLES_WIDTH = 8.23; // Singles sideline width
-  public static readonly NET_HEIGHT = 0.914;
-
-  // Tight, realistic stadium surround (no huge empty unplayable void!)
-  public static readonly SURROUND_WIDTH = 15.0; // Leaves only ~2.0m on sides
-  public static readonly SURROUND_LENGTH = 28.5; // Leaves only ~2.3m behind baseline
 
   constructor(container: HTMLDivElement) {
     this.container = container;
 
-    // 1. Scene & Clean Stadium Atmosphere
+    // 1. Three.js Scene with Atmosphere
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a1120);
+    this.scene.background = new THREE.Color(0x060c18);
+    this.scene.fog = new THREE.FogExp2(0x060c18, 0.012);
 
-    // 2. Camera Setup: Broadcast TV Telephoto Perspective (32° FOV eliminates wide-angle distortion)
+    // 2. Camera Setup: 42° FOV gives natural perspective without fisheye distortion
     const aspect = container.clientWidth / container.clientHeight || 16 / 9;
-    this.camera = new THREE.PerspectiveCamera(32, aspect, 0.5, 100);
-    this.setCameraPosition('broadcast');
+    this.camera = new THREE.PerspectiveCamera(42, aspect, 0.5, 130);
+    this.updateCameraInstant();
 
-    // 3. Lightweight WebGL Renderer (TV 60 FPS Optimized)
-    // Avoids heavy HDR buffers, PMREM radiance, and multi-sampling that overload TV Mali GPUs
+    // 3. TV-Optimized WebGL Renderer
     this.renderer = new THREE.WebGLRenderer({
-      antialias: false,
+      antialias: true,
       powerPreference: 'high-performance',
       stencil: false,
       depth: true,
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
-    // Set 1x pixel ratio as strictly required by My PC TV performance guidelines
+    this.renderer.toneMappingExposure = 1.15;
     this.renderer.setPixelRatio(1.0);
-    this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.shadowMap.enabled = false; // Fast contact shadows used
+    this.renderer.shadowMap.enabled = false;
 
     container.appendChild(this.renderer.domElement);
+    this.applyResolutionAndScaling();
 
-    // 4. Lightweight 2-Point Lighting (Zero PMREM/HDR reflection overhead)
-    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x1e293b, 0.85);
+    // 4. Lighting: Clean 2-point setup with balanced fill
+    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x1e293b, 0.95);
     this.scene.add(this.hemiLight);
 
-    this.dirLight = new THREE.DirectionalLight(0xfffbeb, 1.4);
-    this.dirLight.position.set(10, 20, 12);
+    this.dirLight = new THREE.DirectionalLight(0xfffbeb, 1.45);
+    this.dirLight.position.set(12, 22, 14);
     this.scene.add(this.dirLight);
 
-    // 5. Build Compact, Realistic Court & Stadium
+    // 5. Build ITF Regulation Court and Stadium
     this.buildCourt('hard');
 
-    // 6. Build Athletic Players in Natural Human Proportions (No giant heads!)
-    this.player1 = this.createPlayerCharacter(0x0284c7, 0x1e293b, 0xfcd34d); // Cyan shirt / Navy shorts
-    this.player2 = this.createPlayerCharacter(0xe11d48, 0x1e293b, 0xfcd34d); // Crimson shirt / Navy shorts
+    // 6. Build 4 Athletic Humanoid Models (Team 1 cyan/navy, Team 2 red/orange)
+    this.buildPlayers();
+
+    // 7. Tennis Ball and Shadow
     this.createTennisBall();
 
-    // Initial positions on baseline
-    this.player1.root.position.set(0, 0, 12.0);
-    this.player2.root.position.set(0, 0, -12.0);
+    // Resize listener
+    window.addEventListener('resize', this.handleResize);
+  }
+
+  public setDoublesMode(isDoubles: boolean) {
+    this.isDoubles = isDoubles;
+    if (this.player3 && this.player4) {
+      this.player3.root.visible = isDoubles;
+      this.player4.root.visible = isDoubles;
+    }
+  }
+
+  private buildPlayers() {
+    // Remove existing players if rebuilding on quality change
+    if (this.player1) this.scene.remove(this.player1.root);
+    if (this.player2) this.scene.remove(this.player2.root);
+    if (this.player3) this.scene.remove(this.player3.root);
+    if (this.player4) this.scene.remove(this.player4.root);
+
+    const geom = getQualityGeomConfig(this.graphicsConfig.quality);
+
+    // Player 1: Team 1 Lead (Cyan Polo, White Shorts, Caucasian skin, Neon racket)
+    this.player1 = this.createHumanoidPlayer(0x06b6d4, 0xffffff, 0xfbd0b2, 0x22c55e, geom);
+    this.player1.root.position.set(0, 0, ITF_COURT.HALF_LENGTH + 0.4);
+
+    // Player 2: Team 2 Lead (Red Polo, Slate Shorts, Warm Tan skin, Orange racket)
+    this.player2 = this.createHumanoidPlayer(0xef4444, 0x1e293b, 0xe0a98b, 0xf97316, geom);
+    this.player2.root.position.set(0, 0, -(ITF_COURT.HALF_LENGTH + 0.4));
     this.player2.root.rotation.y = Math.PI;
 
-    window.addEventListener('resize', this.onResize);
+    // Player 3: Team 1 Partner at Net (Navy/Teal Polo, Cyan details)
+    this.player3 = this.createHumanoidPlayer(0x0284c7, 0xf1f5f9, 0xd49b7a, 0x06b6d4, geom);
+    this.player3.root.position.set(-2.4, 0, 3.8); // At net service line
+    this.player3.root.visible = this.isDoubles;
+
+    // Player 4: Team 2 Partner at Net (Amber/Orange Polo, Dark Shorts)
+    this.player4 = this.createHumanoidPlayer(0xf59e0b, 0x0f172a, 0xf0c0a0, 0xec4899, geom);
+    this.player4.root.position.set(2.4, 0, -3.8); // Opponent at net
+    this.player4.root.rotation.y = Math.PI;
+    this.player4.root.visible = this.isDoubles;
   }
 
-  public setGraphicsConfig(cfg: Partial<GraphicsConfig>) {
-    this.graphicsConfig = { ...this.graphicsConfig, ...cfg };
-    if (this.graphicsConfig.quality === 'very_low') {
-      this.renderer.setPixelRatio(1.0);
-      if (this.stadiumGroup) this.stadiumGroup.visible = false;
-      this.dirLight.intensity = 0.8;
-      this.hemiLight.intensity = 0.9;
-    } else if (this.graphicsConfig.quality === 'low') {
-      this.renderer.setPixelRatio(1.0);
-      if (this.stadiumGroup) this.stadiumGroup.visible = false;
-      this.dirLight.intensity = 1.2;
-      this.hemiLight.intensity = 0.85;
-    } else {
-      this.renderer.setPixelRatio(this.graphicsConfig.quality === 'high' ? Math.min(window.devicePixelRatio || 1, 1.25) : 1.0);
-      if (this.stadiumGroup) this.stadiumGroup.visible = this.graphicsConfig.spectators;
-      this.dirLight.intensity = 1.4;
-      this.hemiLight.intensity = 0.85;
-    }
-  }
-
-  public setCourtSurface(surface: CourtSurface) {
-    if (this.activeSurface === surface) return;
-    this.activeSurface = surface;
-    this.scene.remove(this.courtGroup);
-    this.courtGroup = new THREE.Group();
-    this.buildCourt(surface);
-  }
-
-  public setCameraPosition(mode: 'broadcast' | 'chase' | 'overhead') {
-    if (mode === 'broadcast') {
-      // Classic TV Tournament Broadcast Angle
-      this.camera.position.set(0, 7.2, 19.5);
-      this.camera.lookAt(0, 0.8, -1.0);
-      this.camera.fov = 32;
-    } else if (mode === 'chase') {
-      this.camera.position.set(0, 3.8, 16.0);
-      this.camera.lookAt(0, 1.2, 0);
-      this.camera.fov = 38;
-    } else {
-      // High Tactical Angle
-      this.camera.position.set(0, 16.0, 10.0);
-      this.camera.lookAt(0, 0, 0);
-      this.camera.fov = 36;
-    }
-    this.camera.updateProjectionMatrix();
-  }
-
-  /**
-   * Tight, realistic stadium tennis court with standard tennis lines
-   * The playable court occupies >75% of the visible ground surface!
-   */
-  private buildCourt(surface: CourtSurface) {
-    this.courtLines = new THREE.Group();
-    this.stadiumGroup = new THREE.Group();
-
-    let innerColor = 0x1d4ed8; // Hard Court Blue
-    let outerColor = 0x15803d; // Green surround
-
-    if (surface === 'clay') {
-      innerColor = 0xc2410c; // Roland-Garros Terracotta Red
-      outerColor = 0x9a3412;
-    } else if (surface === 'grass') {
-      innerColor = 0x166534; // Wimbledon Deep Grass
-      outerColor = 0x14532d;
-    }
-
-    // Outer Court Floor: Tight 15.0m x 28.5m surround (no giant unplayable void!)
-    const floorGeo = new THREE.PlaneGeometry(TennisScene3D.SURROUND_WIDTH, TennisScene3D.SURROUND_LENGTH);
-    const floorMat = new THREE.MeshLambertMaterial({ color: outerColor });
-    this.courtFloor = new THREE.Mesh(floorGeo, floorMat);
-    this.courtFloor.rotation.x = -Math.PI / 2;
-    this.courtGroup.add(this.courtFloor);
-
-    // Full Playable Court (10.97m x 23.77m)
-    const innerGeo = new THREE.PlaneGeometry(TennisScene3D.COURT_WIDTH, TennisScene3D.COURT_LENGTH);
-    const innerMat = new THREE.MeshLambertMaterial({
-      color: innerColor,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
-    });
-    const innerCourt = new THREE.Mesh(innerGeo, innerMat);
-    innerCourt.rotation.x = -Math.PI / 2;
-    innerCourt.position.y = 0.01;
-    this.courtGroup.add(innerCourt);
-
-    // Crisp White Chalk Lines
-    const lineMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
-    });
-    const lineWidth = 0.07;
-
-    const addLine = (w: number, l: number, x: number, z: number) => {
-      const g = new THREE.PlaneGeometry(w, l);
-      const m = new THREE.Mesh(g, lineMat);
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(x, 0.02, z);
-      this.courtLines.add(m);
-    };
-
-    const halfL = TennisScene3D.COURT_LENGTH / 2;
-    const halfDoublesW = TennisScene3D.COURT_WIDTH / 2;
-    const halfSinglesW = TennisScene3D.SINGLES_WIDTH / 2;
-
-    // Baselines (across full court)
-    addLine(TennisScene3D.COURT_WIDTH, lineWidth * 1.4, 0, halfL);
-    addLine(TennisScene3D.COURT_WIDTH, lineWidth * 1.4, 0, -halfL);
-
-    // Doubles Sidelines
-    addLine(lineWidth, TennisScene3D.COURT_LENGTH, -halfDoublesW, 0);
-    addLine(lineWidth, TennisScene3D.COURT_LENGTH, halfDoublesW, 0);
-
-    // Singles Sidelines (standard tennis alleys)
-    addLine(lineWidth, TennisScene3D.COURT_LENGTH, -halfSinglesW, 0);
-    addLine(lineWidth, TennisScene3D.COURT_LENGTH, halfSinglesW, 0);
-
-    // Service Lines (6.4m from net across singles width)
-    const serviceDist = 6.4;
-    addLine(TennisScene3D.SINGLES_WIDTH, lineWidth, 0, serviceDist);
-    addLine(TennisScene3D.SINGLES_WIDTH, lineWidth, 0, -serviceDist);
-
-    // Center Service Line
-    addLine(lineWidth, serviceDist * 2, 0, 0);
-
-    // Center Marks on Baselines
-    addLine(lineWidth, 0.35, 0, halfL - 0.17);
-    addLine(lineWidth, 0.35, 0, -halfL + 0.17);
-
-    this.courtGroup.add(this.courtLines);
-
-    // Tennis Net with Posts and Top Tape
-    this.netGroup = new THREE.Group();
-    const netWidth = TennisScene3D.COURT_WIDTH + 1.2;
-    const netHeight = TennisScene3D.NET_HEIGHT;
-
-    // Net mesh
-    const netGeo = new THREE.PlaneGeometry(netWidth, netHeight, 8, 2);
-    const netMat = new THREE.MeshBasicMaterial({
-      color: 0x111827,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.65,
-    });
-    const netMesh = new THREE.Mesh(netGeo, netMat);
-    netMesh.position.set(0, netHeight / 2, 0);
-    this.netGroup.add(netMesh);
-
-    // White Top Tape
-    const tapeGeo = new THREE.BoxGeometry(netWidth, 0.06, 0.04);
-    const tapeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const tapeMesh = new THREE.Mesh(tapeGeo, tapeMat);
-    tapeMesh.position.set(0, netHeight, 0);
-    this.netGroup.add(tapeMesh);
-
-    // Center Strap
-    const strapMesh = new THREE.Mesh(new THREE.BoxGeometry(0.06, netHeight, 0.05), tapeMat);
-    strapMesh.position.set(0, netHeight / 2, 0);
-    this.netGroup.add(strapMesh);
-
-    // Net Posts
-    const postGeo = new THREE.CylinderGeometry(0.06, 0.06, netHeight * 1.15, 8);
-    const postMat = new THREE.MeshLambertMaterial({ color: 0x0284c7 });
-    const leftPost = new THREE.Mesh(postGeo, postMat);
-    leftPost.position.set(-netWidth / 2, (netHeight * 1.15) / 2, 0);
-    const rightPost = leftPost.clone();
-    rightPost.position.x = netWidth / 2;
-    this.netGroup.add(leftPost);
-    this.netGroup.add(rightPost);
-
-    this.courtGroup.add(this.netGroup);
-
-    // Low-Poly Merged Stadium Grandstands (Extremely fast, only 3-4 draw calls!)
-    this.buildOptimizedStadium();
-    this.courtGroup.add(this.stadiumGroup);
-
-    this.scene.add(this.courtGroup);
-  }
-
-  /**
-   * High-performance stadium grandstands:
-   * Merged geometric tiers with low-poly spectator rows (replaces 350+ individual meshes!)
-   */
-  private buildOptimizedStadium() {
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0x0f172a });
-    const bannerMat = new THREE.MeshLambertMaterial({ color: 0x0369a1 });
-    const crowdMat1 = new THREE.MeshLambertMaterial({ color: 0x38bdf8 });
-    const crowdMat2 = new THREE.MeshLambertMaterial({ color: 0xf43f5e });
-
-    const courtHalfW = TennisScene3D.SURROUND_WIDTH / 2;
-    const courtHalfL = TennisScene3D.SURROUND_LENGTH / 2;
-
-    // 1. Sleek Perimeter Sponsor Barriers (right at boundary edge)
-    const sideBarrierGeo = new THREE.BoxGeometry(0.3, 0.9, TennisScene3D.SURROUND_LENGTH);
-    const leftBarrier = new THREE.Mesh(sideBarrierGeo, bannerMat);
-    leftBarrier.position.set(-courtHalfW - 0.15, 0.45, 0);
-    const rightBarrier = leftBarrier.clone();
-    rightBarrier.position.x = courtHalfW + 0.15;
-    this.stadiumGroup.add(leftBarrier);
-    this.stadiumGroup.add(rightBarrier);
-
-    const endBarrierGeo = new THREE.BoxGeometry(TennisScene3D.SURROUND_WIDTH + 0.6, 0.9, 0.3);
-    const northBarrier = new THREE.Mesh(endBarrierGeo, bannerMat);
-    northBarrier.position.set(0, 0.45, -courtHalfL - 0.15);
-    const southBarrier = northBarrier.clone();
-    southBarrier.position.z = courtHalfL + 0.15;
-    this.stadiumGroup.add(northBarrier);
-    this.stadiumGroup.add(southBarrier);
-
-    // 2. Tiered Seating Stands (Side grandstands)
-    for (let tier = 0; tier < 3; tier++) {
-      const tierH = 0.8;
-      const tierW = 1.8;
-      const tierGeo = new THREE.BoxGeometry(tierW, tierH, TennisScene3D.SURROUND_LENGTH);
-
-      // Left Stand
-      const leftStand = new THREE.Mesh(tierGeo, wallMat);
-      leftStand.position.set(-courtHalfW - 0.9 - tier * tierW, tier * tierH + tierH / 2, 0);
-      this.stadiumGroup.add(leftStand);
-
-      // Left Crowd Strip (Single merged bar representing colorful spectators)
-      const crowdGeo = new THREE.BoxGeometry(0.8, 0.6, TennisScene3D.SURROUND_LENGTH - 2);
-      const leftCrowd = new THREE.Mesh(crowdGeo, tier % 2 === 0 ? crowdMat1 : crowdMat2);
-      leftCrowd.position.set(leftStand.position.x, leftStand.position.y + tierH / 2 + 0.3, 0);
-      this.stadiumGroup.add(leftCrowd);
-
-      // Right Stand
-      const rightStand = leftStand.clone();
-      rightStand.position.x = courtHalfW + 0.9 + tier * tierW;
-      this.stadiumGroup.add(rightStand);
-
-      const rightCrowd = leftCrowd.clone();
-      rightCrowd.position.x = rightStand.position.x;
-      this.stadiumGroup.add(rightCrowd);
-    }
-  }
-
-  /**
-   * Procedural tennis player in NATURAL, ATHLETIC HUMAN PROPORTIONS
-   * (Total Height ~1.82m, Head Diameter 0.22m, natural athletic physique)
-   */
-  private createPlayerCharacter(shirtColor: number, shortsColor: number, skinColor: number): Player3DModel {
-    const root = new THREE.Group();
-
-    // 1. Soft Procedural Ground Contact Shadow (100% smooth, 0 GPU shadow-map cost)
-    const shadowGeo = new THREE.CircleGeometry(0.48, 16);
-    const shadowMat = new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-    });
-    const shadow = new THREE.Mesh(shadowGeo, shadowMat);
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.position.y = 0.02;
-    root.add(shadow);
-
-    const skinMat = new THREE.MeshLambertMaterial({ color: skinColor });
-    const shirtMat = new THREE.MeshLambertMaterial({ color: shirtColor });
-    const shortsMat = new THREE.MeshLambertMaterial({ color: shortsColor });
-    const shoeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-
-    // 2. Torso: Athletic Polo Shirt (Height ~0.55m, Shoulder Width ~0.38m, Waist ~0.26m)
-    const torsoGeo = new THREE.CylinderGeometry(0.18, 0.14, 0.55, 8);
-    const torso = new THREE.Mesh(torsoGeo, shirtMat);
-    torso.position.y = 1.25;
-    root.add(torso);
-
-    // Collar
-    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.08, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-    collar.position.y = 0.28;
-    torso.add(collar);
-
-    // 3. Head: Natural Human Proportions (Radius 0.10m, Height 0.22m — NO giant head!)
-    const headGroup = new THREE.Group();
-    headGroup.position.set(0, 0.42, 0);
-
-    // Neck
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, 0.08, 8), skinMat);
-    neck.position.y = -0.04;
-    headGroup.add(neck);
-
-    // Natural Cranium / Head Sphere
-    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.105, 12, 10), skinMat);
-    headMesh.position.y = 0.08;
-    headGroup.add(headMesh);
-
-    // Athletic Sweatband
-    const bandMesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.11, 0.11, 0.04, 12),
-      new THREE.MeshBasicMaterial({ color: shirtColor })
-    );
-    bandMesh.position.y = 0.12;
-    headGroup.add(bandMesh);
-
-    torso.add(headGroup);
-
-    // 4. Tennis Shorts (Length ~0.28m, Width ~0.22m)
-    const shortsGeo = new THREE.CylinderGeometry(0.15, 0.17, 0.28, 8);
-    const shorts = new THREE.Mesh(shortsGeo, shortsMat);
-    shorts.position.y = -0.32;
-    torso.add(shorts);
-
-    // 5. Athletic Legs (Left & Right, Length ~0.78m)
-    const createLeg = (xOffset: number) => {
-      const legGroup = new THREE.Group();
-      legGroup.position.set(xOffset, 0.95, 0);
-
-      // Thigh & Shin
-      const legMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.72, 8), skinMat);
-      legMesh.position.y = -0.36;
-      legGroup.add(legMesh);
-
-      // Tennis Shoe
-      const shoeMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.24), shoeMat);
-      shoeMesh.position.set(0, -0.74, 0.04);
-      legGroup.add(shoeMesh);
-
-      return legGroup;
-    };
-
-    const rightLeg = createLeg(0.11);
-    const leftLeg = createLeg(-0.11);
-    root.add(rightLeg);
-    root.add(leftLeg);
-
-    // 6. Athletic Arms (Upper arm + Forearm)
-    const createArm = (xOffset: number) => {
-      const armGroup = new THREE.Group();
-      armGroup.position.set(xOffset, 1.45, 0);
-
-      const armMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.48, 8), skinMat);
-      armMesh.position.y = -0.24;
-      armGroup.add(armMesh);
-
-      // Wristband
-      const wristband = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.052, 0.052, 0.05, 8),
-        new THREE.MeshBasicMaterial({ color: shirtColor })
-      );
-      wristband.position.y = -0.42;
-      armGroup.add(wristband);
-
-      return armGroup;
-    };
-
-    const rightArm = createArm(0.24);
-    const leftArm = createArm(-0.24);
-    root.add(rightArm);
-    root.add(leftArm);
-
-    // 7. Tennis Racket in Hand
-    const racket = new THREE.Group();
-    // Grip
-    const gripGeo = new THREE.CylinderGeometry(0.02, 0.022, 0.32, 8);
-    const gripMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
-    const grip = new THREE.Mesh(gripGeo, gripMat);
-    grip.position.y = -0.16;
-    racket.add(grip);
-
-    // Head Rim
-    const rimMat = new THREE.MeshLambertMaterial({ color: 0x38bdf8 });
-    const rimGeo = new THREE.TorusGeometry(0.16, 0.018, 6, 16);
-    const rim = new THREE.Mesh(rimGeo, rimMat);
-    rim.position.set(0, 0.18, 0);
-    racket.add(rim);
-
-    // Strings
-    const stringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45 });
-    const strings = new THREE.Mesh(new THREE.CircleGeometry(0.15, 10), stringMat);
-    strings.position.set(0, 0.18, 0);
-    racket.add(strings);
-
-    // Attach to hand
-    racket.position.set(0, -0.46, 0.08);
-    racket.rotation.x = Math.PI / 4;
-    rightArm.add(racket);
-
-    this.scene.add(root);
-
-    return {
-      root,
-      torso,
-      head: headGroup,
-      rightArm,
-      leftArm,
-      rightLeg,
-      leftLeg,
-      racket,
-      shadow,
-      animState: {
-        swingProgress: 0,
-        swingType: null,
-        runCycle: 0,
-        isRunning: false,
-      },
-    };
-  }
-
-  /**
-   * Fast, low-poly optic yellow tennis ball
-   */
   private createTennisBall() {
-    const ballGeo = new THREE.SphereGeometry(0.15, 10, 10);
-    const ballMat = new THREE.MeshLambertMaterial({ color: 0xccff00 });
+    if (this.ballMesh) this.scene.remove(this.ballMesh);
+    if (this.ballShadow) this.scene.remove(this.ballShadow);
+
+    const geom = getQualityGeomConfig(this.graphicsConfig.quality);
+
+    const ballGeo = new THREE.SphereGeometry(0.14, geom.ballSegmentsW, geom.ballSegmentsH);
+    const ballMat = new THREE.MeshLambertMaterial({ color: 0xd9f99d });
 
     this.ballMesh = new THREE.Mesh(ballGeo, ballMat);
     this.ballMesh.position.set(0, 1.0, 0);
     this.scene.add(this.ballMesh);
 
-    // Soft ball contact shadow on court floor
-    const shadowGeo = new THREE.CircleGeometry(0.22, 12);
+    // Ball contact shadow on court floor
+    const shadowGeo = new THREE.CircleGeometry(0.24, geom.shadowSegments);
     const shadowMat = new THREE.MeshBasicMaterial({
       color: 0x000000,
       transparent: true,
@@ -547,10 +297,560 @@ export class TennisScene3D {
   }
 
   /**
-   * Spawn lightweight impact particle puff
+   * Procedural Athletic Humanoid Model in Realistic Human Proportions (~1.85m tall)
+   * Polygon count dynamically dictated by QualityGeometryConfig!
    */
-  public triggerImpactPuff(pos: THREE.Vector3, color: number = 0xccff00) {
-    const count = 10;
+  private createHumanoidPlayer(
+    shirtColor: number,
+    shortsColor: number,
+    skinColor: number,
+    racketColor: number,
+    geom: QualityGeometryConfig
+  ): Player3DModel {
+    const root = new THREE.Group();
+
+    // 1. Soft Dynamic Contact Shadow
+    const shadowGeo = new THREE.CircleGeometry(0.55, geom.shadowSegments);
+    const shadowMat = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+    });
+    const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.02;
+    root.add(shadow);
+
+    const skinMat = new THREE.MeshLambertMaterial({ color: skinColor });
+    const shirtMat = new THREE.MeshLambertMaterial({ color: shirtColor });
+    const shortsMat = new THREE.MeshLambertMaterial({ color: shortsColor });
+    const shoeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const sockMat = new THREE.MeshLambertMaterial({ color: 0xe2e8f0 });
+
+    const radialSegs = geom.limbRadialSegments;
+
+    // 2. Pelvis / Hips Root (height ~0.95m from ground)
+    const pelvis = new THREE.Group();
+    pelvis.position.y = 0.95;
+    root.add(pelvis);
+
+    // Tennis Shorts / Pelvis Mesh
+    const pelvisMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.17, 0.22, radialSegs), shortsMat);
+    pelvisMesh.position.y = 0.02;
+    pelvis.add(pelvisMesh);
+
+    // 3. Torso: Athletic V-Taper (Polo shirt, height ~0.48m, shoulder width ~0.44m, waist ~0.30m)
+    const torsoGeo = new THREE.CylinderGeometry(0.22, 0.16, 0.46, geom.torsoSegments);
+    const torso = new THREE.Mesh(torsoGeo, shirtMat);
+    torso.position.y = 0.32;
+    pelvis.add(torso);
+
+    // Shirt Collar
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.06, radialSegs), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+    collar.position.y = 0.23;
+    torso.add(collar);
+
+    // 4. Head & Neck: Anatomically natural (~0.22m head height)
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0, 0.35, 0);
+
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.07, 0.09, radialSegs), skinMat);
+    neck.position.y = -0.02;
+    headGroup.add(neck);
+
+    // Athletic Cranium
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.115, geom.headSegmentsW, geom.headSegmentsH), skinMat);
+    headMesh.position.y = 0.10;
+    headMesh.scale.set(0.95, 1.1, 1.0);
+    headGroup.add(headMesh);
+
+    // Tennis Headband / Sweatband
+    const headband = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.12, 0.04, radialSegs),
+      new THREE.MeshBasicMaterial({ color: racketColor })
+    );
+    headband.position.y = 0.15;
+    headGroup.add(headband);
+
+    // Visor / Cap Brim forward
+    const visorGeo = new THREE.BoxGeometry(0.15, 0.02, 0.12);
+    const visorMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const visor = new THREE.Mesh(visorGeo, visorMat);
+    visor.position.set(0, 0.15, 0.12);
+    visor.rotation.x = 0.15;
+    headGroup.add(visor);
+
+    torso.add(headGroup);
+
+    // 5. Dual-Joint Legs (Thigh -> Knee -> Shin -> Ankle & Foot)
+    const createLeg = (xOffset: number) => {
+      const hipJoint = new THREE.Group();
+      hipJoint.position.set(xOffset, -0.05, 0);
+
+      // Thigh
+      const thighGroup = new THREE.Group();
+      const thighShorts = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.085, 0.22, radialSegs), shortsMat);
+      thighShorts.position.y = -0.11;
+      thighGroup.add(thighShorts);
+
+      const thighSkin = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.20, radialSegs), skinMat);
+      thighSkin.position.y = -0.28;
+      thighGroup.add(thighSkin);
+      hipJoint.add(thighGroup);
+
+      // Knee Joint
+      const kneeJoint = new THREE.Group();
+      kneeJoint.position.set(0, -0.38, 0);
+      thighGroup.add(kneeJoint);
+
+      // Shin / Calf + White Sock
+      const shinGroup = new THREE.Group();
+      const calf = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.055, 0.22, radialSegs), skinMat);
+      calf.position.y = -0.11;
+      shinGroup.add(calf);
+
+      const sock = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.055, 0.18, radialSegs), sockMat);
+      sock.position.y = -0.26;
+      shinGroup.add(sock);
+      kneeJoint.add(shinGroup);
+
+      // Tennis Sneaker (Detailed rubber sole & athletic upper)
+      const footGroup = new THREE.Group();
+      footGroup.position.set(0, -0.38, 0.06);
+
+      const shoeUpper = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.25), shoeMat);
+      footGroup.add(shoeUpper);
+
+      const shoeSole = new THREE.Mesh(
+        new THREE.BoxGeometry(0.125, 0.03, 0.26),
+        new THREE.MeshLambertMaterial({ color: 0x0284c7 })
+      );
+      shoeSole.position.y = -0.045;
+      footGroup.add(shoeSole);
+
+      shinGroup.add(footGroup);
+
+      return {
+        hip: hipJoint,
+        thigh: thighSkin,
+        knee: kneeJoint,
+        shin: calf,
+        foot: shoeUpper,
+      };
+    };
+
+    const rightLegData = createLeg(0.12);
+    const leftLegData = createLeg(-0.12);
+    pelvis.add(rightLegData.hip);
+    pelvis.add(leftLegData.hip);
+
+    // 6. Dual-Joint Arms (Shoulder -> Upper Arm -> Elbow -> Forearm -> Wrist & Hand)
+    const createArm = (xOffset: number, isRight: boolean) => {
+      const shoulderJoint = new THREE.Group();
+      shoulderJoint.position.set(xOffset, 0.18, 0);
+
+      // Deltoid Sleeve
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.07, 0.12, radialSegs), shirtMat);
+      sleeve.position.y = -0.06;
+      shoulderJoint.add(sleeve);
+
+      // Upper Arm (Bicep/Tricep)
+      const upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.18, radialSegs), skinMat);
+      upperArm.position.y = -0.18;
+      shoulderJoint.add(upperArm);
+
+      // Elbow Joint
+      const elbowJoint = new THREE.Group();
+      elbowJoint.position.set(0, -0.26, 0);
+      shoulderJoint.add(elbowJoint);
+
+      // Forearm + Wristband + Hand
+      const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.22, radialSegs), skinMat);
+      forearm.position.y = -0.11;
+      elbowJoint.add(forearm);
+
+      // Wristband
+      const wristband = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.052, 0.052, 0.05, radialSegs),
+        new THREE.MeshBasicMaterial({ color: racketColor })
+      );
+      wristband.position.y = -0.20;
+      elbowJoint.add(wristband);
+
+      // Hand
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), skinMat);
+      hand.position.set(0, -0.25, 0.02);
+      elbowJoint.add(hand);
+
+      return {
+        shoulder: shoulderJoint,
+        upperArm,
+        elbow: elbowJoint,
+        forearm,
+        hand,
+      };
+    };
+
+    const rightArmData = createArm(0.25, true);
+    const leftArmData = createArm(-0.25, false);
+    torso.add(rightArmData.shoulder);
+    torso.add(leftArmData.shoulder);
+
+    // 7. Tennis Racket with scalable hoop resolution
+    const racket = new THREE.Group();
+
+    // Racket Grip Wrap
+    const gripGeo = new THREE.CylinderGeometry(0.022, 0.024, 0.32, radialSegs);
+    const gripMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
+    const grip = new THREE.Mesh(gripGeo, gripMat);
+    grip.position.y = 0.16;
+    racket.add(grip);
+
+    // Racket Throat / Shaft V-shape
+    const shaftGeo = new THREE.CylinderGeometry(0.016, 0.02, 0.14, radialSegs);
+    const shaftMat = new THREE.MeshLambertMaterial({ color: racketColor });
+    const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+    shaft.position.y = 0.36;
+    racket.add(shaft);
+
+    // Aerodynamic Oval Racket Head Rim (Curved Torus)
+    const rimMat = new THREE.MeshLambertMaterial({ color: racketColor });
+    const rimGeo = new THREE.TorusGeometry(0.18, 0.016, geom.racketTorusTubular, geom.racketTorusRadial);
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.position.set(0, 0.54, 0);
+    rim.scale.set(0.85, 1.15, 1.0); // Isometric tennis oval
+    racket.add(rim);
+
+    // String Mesh Face (semi-transparent woven nylon strings)
+    const stringMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.5,
+    });
+    const strings = new THREE.Mesh(new THREE.CircleGeometry(0.17, geom.racketTorusRadial), stringMat);
+    strings.position.set(0, 0.54, 0);
+    strings.scale.set(0.85, 1.15, 1.0);
+    racket.add(strings);
+
+    // Stencil Logo in center of strings
+    const stencil = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.10, 0.10),
+      new THREE.MeshBasicMaterial({ color: racketColor, transparent: true, opacity: 0.7 })
+    );
+    stencil.position.set(0, 0.54, 0.005);
+    racket.add(stencil);
+
+    // Mount racket securely in right hand with athletic grip angle
+    racket.position.set(0, -0.25, 0.02);
+    racket.rotation.x = Math.PI / 3.5;
+    racket.rotation.z = -0.2;
+    rightArmData.elbow.add(racket);
+
+    this.scene.add(root);
+
+    return {
+      root,
+      pelvis,
+      torso,
+      head: headGroup,
+      headMesh,
+      rightShoulder: rightArmData.shoulder,
+      rightUpperArm: rightArmData.upperArm,
+      rightForearmGroup: rightArmData.elbow,
+      rightForearm: rightArmData.forearm,
+      leftShoulder: leftArmData.shoulder,
+      leftUpperArm: leftArmData.upperArm,
+      leftForearmGroup: leftArmData.elbow,
+      leftForearm: leftArmData.forearm,
+      rightHip: rightLegData.hip,
+      rightThigh: rightLegData.thigh,
+      rightKnee: rightLegData.knee,
+      rightShin: rightLegData.shin,
+      rightFoot: rightLegData.foot,
+      leftHip: leftLegData.hip,
+      leftThigh: leftLegData.thigh,
+      leftKnee: leftLegData.knee,
+      leftShin: leftLegData.shin,
+      leftFoot: leftLegData.foot,
+      racket,
+      shadow,
+      animState: {
+        swingProgress: 0,
+        swingType: null,
+        runCycle: 0,
+        isRunning: false,
+        idleTimer: 0,
+        isCharging: false,
+        chargingShot: null,
+        chargeProgress: 0,
+      },
+    };
+  }
+
+  /**
+   * Builds the official ITF Regulation Tennis Court & Stadium
+   */
+  private buildCourt(surface: CourtSurface) {
+    if (this.courtGroup) {
+      this.scene.remove(this.courtGroup);
+      this.courtGroup.clear();
+    }
+
+    this.courtGroup = new THREE.Group();
+    this.scene.add(this.courtGroup);
+
+    const geom = getQualityGeomConfig(this.graphicsConfig.quality);
+    const surf = COURT_SURFACES[surface];
+
+    // 1. Surrounding Runoff Deck
+    const surroundGeo = new THREE.PlaneGeometry(ITF_COURT.SURROUND_WIDTH, ITF_COURT.SURROUND_LENGTH);
+    const surroundMat = new THREE.MeshLambertMaterial({ color: surf.colorOuter });
+    const surroundMesh = new THREE.Mesh(surroundGeo, surroundMat);
+    surroundMesh.rotation.x = -Math.PI / 2;
+    surroundMesh.position.y = -0.001;
+    this.courtGroup.add(surroundMesh);
+
+    // 2. Play Court Infield (Doubles Area 10.97m x 23.77m)
+    const infieldGeo = new THREE.PlaneGeometry(ITF_COURT.DOUBLES_WIDTH, ITF_COURT.LENGTH);
+    const infieldMat = new THREE.MeshLambertMaterial({ color: surf.colorInner });
+    this.courtFloor = new THREE.Mesh(infieldGeo, infieldMat);
+    this.courtFloor.rotation.x = -Math.PI / 2;
+    this.courtFloor.position.y = 0.0;
+    this.courtGroup.add(this.courtFloor);
+
+    // 3. Official ITF White Boundary Lines
+    this.courtLines = new THREE.Group();
+    this.courtGroup.add(this.courtLines);
+
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const yOffset = 0.004;
+
+    const addLine = (w: number, l: number, x: number, z: number) => {
+      const lineGeo = new THREE.PlaneGeometry(w, l);
+      const mesh = new THREE.Mesh(lineGeo, lineMat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(x, yOffset, z);
+      this.courtLines.add(mesh);
+    };
+
+    const courtHalfW = ITF_COURT.HALF_DOUBLES_WIDTH;
+    const courtHalfL = ITF_COURT.HALF_LENGTH;
+    const singlesHalfW = ITF_COURT.HALF_SINGLES_WIDTH;
+    const standardLineWidth = ITF_COURT.LINE_WIDTH_STANDARD;
+    const baselineWidth = ITF_COURT.LINE_WIDTH_BASELINE;
+
+    // Baselines (width 10.97m)
+    addLine(ITF_COURT.DOUBLES_WIDTH, baselineWidth, 0, courtHalfL);
+    addLine(ITF_COURT.DOUBLES_WIDTH, baselineWidth, 0, -courtHalfL);
+
+    // Center Service Marks
+    addLine(standardLineWidth, ITF_COURT.CENTER_MARK_LENGTH, 0, courtHalfL - ITF_COURT.CENTER_MARK_LENGTH / 2);
+    addLine(standardLineWidth, ITF_COURT.CENTER_MARK_LENGTH, 0, -courtHalfL + ITF_COURT.CENTER_MARK_LENGTH / 2);
+
+    // Doubles Sidelines
+    addLine(standardLineWidth, ITF_COURT.LENGTH, courtHalfW, 0);
+    addLine(standardLineWidth, ITF_COURT.LENGTH, -courtHalfW, 0);
+
+    // Singles Sidelines
+    addLine(standardLineWidth, ITF_COURT.LENGTH, singlesHalfW, 0);
+    addLine(standardLineWidth, ITF_COURT.LENGTH, -singlesHalfW, 0);
+
+    // Service Lines (6.40m from net)
+    addLine(ITF_COURT.SINGLES_WIDTH, standardLineWidth, 0, ITF_COURT.SERVICE_LINE_DIST);
+    addLine(ITF_COURT.SINGLES_WIDTH, standardLineWidth, 0, -ITF_COURT.SERVICE_LINE_DIST);
+
+    // Center Service Line
+    addLine(standardLineWidth, ITF_COURT.SERVICE_LINE_DIST * 2, 0, 0);
+
+    // 4. Regulation Tennis Net & Posts
+    this.netGroup = new THREE.Group();
+    this.courtGroup.add(this.netGroup);
+
+    const postRadSegs = geom.postSegments;
+    const postGeo = new THREE.CylinderGeometry(0.045, 0.05, ITF_COURT.NET_HEIGHT_POST, postRadSegs);
+    const postMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
+
+    const post1 = new THREE.Mesh(postGeo, postMat);
+    post1.position.set(courtHalfW + ITF_COURT.NET_POST_OFFSET, ITF_COURT.NET_HEIGHT_POST / 2, 0);
+    this.netGroup.add(post1);
+
+    const post2 = new THREE.Mesh(postGeo, postMat);
+    post2.position.set(-(courtHalfW + ITF_COURT.NET_POST_OFFSET), ITF_COURT.NET_HEIGHT_POST / 2, 0);
+    this.netGroup.add(post2);
+
+    // Top White Net Tape
+    const netTapeGeo = new THREE.CylinderGeometry(0.025, 0.025, ITF_COURT.NET_WIDTH, geom.limbRadialSegments);
+    const netTapeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const netTape = new THREE.Mesh(netTapeGeo, netTapeMat);
+    netTape.rotation.z = Math.PI / 2;
+    netTape.position.set(0, ITF_COURT.NET_HEIGHT_CENTER + 0.02, 0);
+    this.netGroup.add(netTape);
+
+    // Semi-transparent Micro-Mesh Net Fabric
+    const netMeshGeo = new THREE.PlaneGeometry(ITF_COURT.NET_WIDTH, ITF_COURT.NET_HEIGHT_CENTER);
+    const netMeshMat = new THREE.MeshBasicMaterial({
+      color: 0x0f172a,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.6,
+    });
+    const netMesh = new THREE.Mesh(netMeshGeo, netMeshMat);
+    netMesh.position.set(0, ITF_COURT.NET_HEIGHT_CENTER / 2, 0);
+    this.netGroup.add(netMesh);
+
+    // Center Net Strap (White canvas)
+    const strapGeo = new THREE.BoxGeometry(0.05, ITF_COURT.NET_HEIGHT_CENTER, 0.02);
+    const strapMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const strap = new THREE.Mesh(strapGeo, strapMat);
+    strap.position.set(0, ITF_COURT.NET_HEIGHT_CENTER / 2, 0);
+    this.netGroup.add(strap);
+
+    // 5. Championship Stadium Surround & Seating
+    this.buildStadium(geom);
+  }
+
+  private buildStadium(geom: QualityGeometryConfig) {
+    if (this.stadiumGroup) {
+      this.courtGroup.remove(this.stadiumGroup);
+      this.stadiumGroup.clear();
+    }
+
+    this.stadiumGroup = new THREE.Group();
+    this.courtGroup.add(this.stadiumGroup);
+
+    // Perimeter Court Wall
+    const wallHeight = 1.1;
+    const wallThickness = 0.35;
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0x0f172a });
+
+    const backWallGeo = new THREE.BoxGeometry(ITF_COURT.SURROUND_WIDTH, wallHeight, wallThickness);
+    const backWall1 = new THREE.Mesh(backWallGeo, wallMat);
+    backWall1.position.set(0, wallHeight / 2, ITF_COURT.SURROUND_LENGTH / 2);
+    this.stadiumGroup.add(backWall1);
+
+    const backWall2 = new THREE.Mesh(backWallGeo, wallMat);
+    backWall2.position.set(0, wallHeight / 2, -ITF_COURT.SURROUND_LENGTH / 2);
+    this.stadiumGroup.add(backWall2);
+
+    const sideWallGeo = new THREE.BoxGeometry(wallThickness, wallHeight, ITF_COURT.SURROUND_LENGTH);
+    const sideWall1 = new THREE.Mesh(sideWallGeo, wallMat);
+    sideWall1.position.set(ITF_COURT.SURROUND_WIDTH / 2, wallHeight / 2, 0);
+    this.stadiumGroup.add(sideWall1);
+
+    const sideWall2 = new THREE.Mesh(sideWallGeo, wallMat);
+    sideWall2.position.set(-ITF_COURT.SURROUND_WIDTH / 2, wallHeight / 2, 0);
+    this.stadiumGroup.add(sideWall2);
+
+    // Spectator Grandstands (Radial tiered seating)
+    if (this.graphicsConfig.spectators) {
+      const tierMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
+      const tierGeo = new THREE.BoxGeometry(ITF_COURT.SURROUND_WIDTH + 6, 2.5, 5);
+
+      const northTier = new THREE.Mesh(tierGeo, tierMat);
+      northTier.position.set(0, 1.25, -(ITF_COURT.SURROUND_LENGTH / 2 + 3.2));
+      this.stadiumGroup.add(northTier);
+
+      const southTier = new THREE.Mesh(tierGeo, tierMat);
+      southTier.position.set(0, 1.25, ITF_COURT.SURROUND_LENGTH / 2 + 3.2);
+      this.stadiumGroup.add(southTier);
+
+      const sideTierGeo = new THREE.BoxGeometry(6, 2.8, ITF_COURT.SURROUND_LENGTH);
+      const leftTier = new THREE.Mesh(sideTierGeo, tierMat);
+      leftTier.position.set(-(ITF_COURT.SURROUND_WIDTH / 2 + 3.8), 1.4, 0);
+      this.stadiumGroup.add(leftTier);
+
+      const rightTier = new THREE.Mesh(sideTierGeo, tierMat);
+      rightTier.position.set(ITF_COURT.SURROUND_WIDTH / 2 + 3.8, 1.4, 0);
+      this.stadiumGroup.add(rightTier);
+    }
+
+    // Umpire High Chair
+    const chairGroup = new THREE.Group();
+    chairGroup.position.set(ITF_COURT.HALF_DOUBLES_WIDTH + 1.2, 0, 0);
+    const chairLadderMat = new THREE.MeshLambertMaterial({ color: 0x475569 });
+    const ladderGeo = new THREE.CylinderGeometry(0.04, 0.05, 2.4, geom.postSegments);
+    const ladder1 = new THREE.Mesh(ladderGeo, chairLadderMat);
+    ladder1.position.set(-0.25, 1.2, 0);
+    const ladder2 = ladder1.clone();
+    ladder2.position.x = 0.25;
+    chairGroup.add(ladder1);
+    chairGroup.add(ladder2);
+
+    const seatMesh = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.1, 0.7), new THREE.MeshLambertMaterial({ color: 0x0284c7 }));
+    seatMesh.position.set(0, 2.2, 0);
+    chairGroup.add(seatMesh);
+    this.stadiumGroup.add(chairGroup);
+  }
+
+  public setCourtSurface(surface: CourtSurface) {
+    this.activeSurface = surface;
+    this.buildCourt(surface);
+  }
+
+  public setGraphicsConfig(cfg: Partial<GraphicsConfig>) {
+    const prevQuality = this.graphicsConfig.quality;
+    const prevRes = this.graphicsConfig.renderResolution;
+    const prevFilter = this.graphicsConfig.scalingFilter;
+    this.graphicsConfig = { ...this.graphicsConfig, ...cfg };
+
+    if (cfg.quality && cfg.quality !== prevQuality) {
+      // Rebuild meshes with new polygon resolution!
+      this.buildPlayers();
+      this.createTennisBall();
+      this.buildCourt(this.activeSurface);
+    }
+
+    if (
+      (cfg.renderResolution && cfg.renderResolution !== prevRes) ||
+      (cfg.scalingFilter && cfg.scalingFilter !== prevFilter)
+    ) {
+      this.applyResolutionAndScaling();
+    }
+  }
+
+  public setRenderResolution(res: RenderResolution) {
+    this.graphicsConfig.renderResolution = res;
+    this.applyResolutionAndScaling();
+  }
+
+  public setScalingFilter(filter: ScalingFilter) {
+    this.graphicsConfig.scalingFilter = filter;
+    this.applyResolutionAndScaling();
+  }
+
+  public setCameraZoom(zoom: number) {
+    this.graphicsConfig.cameraZoom = THREE.MathUtils.clamp(zoom, 0.6, 1.8);
+  }
+
+  public setCameraAngle(angle: CameraAngle) {
+    this.graphicsConfig.cameraAngle = angle;
+  }
+
+  public setCameraHeight(height: number) {
+    this.graphicsConfig.cameraHeight = THREE.MathUtils.clamp(height, 1.0, 50.0);
+  }
+
+  public setVFXLevel(level: 'low' | 'medium' | 'high') {
+    this.graphicsConfig.vfxLevel = level;
+  }
+
+  public getGraphicsConfig(): GraphicsConfig {
+    return this.graphicsConfig;
+  }
+
+  /**
+   * Impact puff particle effects on racket hits and court bounces
+   * Respects VFX Level: 'low' removes them all, 'medium' keeps half, 'high' keeps all.
+   */
+  public triggerImpactPuff(pos: THREE.Vector3, color: number = 0xd9f99d) {
+    const vfx = this.graphicsConfig.vfxLevel || 'high';
+    if (vfx === 'low') {
+      return; // Low removes all sprinkle particles
+    }
+
+    const baseCount = this.graphicsConfig.quality === 'fancy' ? 24 : 14;
+    const count = vfx === 'medium' ? Math.max(4, Math.round(baseCount * 0.5)) : baseCount;
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
     const velocities = new Float32Array(count * 3);
@@ -560,22 +860,22 @@ export class TennisScene3D {
       positions[i * 3 + 1] = pos.y;
       positions[i * 3 + 2] = pos.z;
 
-      velocities[i * 3] = (Math.random() - 0.5) * 3.0;
-      velocities[i * 3 + 1] = Math.random() * 2.5 + 0.8;
-      velocities[i * 3 + 2] = (Math.random() - 0.5) * 3.0;
+      velocities[i * 3] = (Math.random() - 0.5) * 3.4;
+      velocities[i * 3 + 1] = Math.random() * 2.8 + 0.9;
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * 3.4;
     }
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     (geo as unknown as { userData: { velocities: Float32Array; life: number } }).userData = {
       velocities,
-      life: 0.7,
+      life: 0.75,
     };
 
     const mat = new THREE.PointsMaterial({
       color,
-      size: 0.12,
+      size: this.graphicsConfig.quality === 'fancy' ? 0.16 : 0.13,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.88,
     });
 
     const points = new THREE.Points(geo, mat);
@@ -584,75 +884,321 @@ export class TennisScene3D {
   }
 
   /**
-   * Update character animations: run cycles, forehand/backhand swings
+   * Multi-Phase Animation State Machine with distinct kinematics for all shot types:
+   * Forehand Topspin, Backhand Slice, Overhead Smash, Tactical Lob, Drop Shot, and Serve!
    */
   public updatePlayerAnimation(player: Player3DModel, dt: number) {
-    if (player.animState.isRunning) {
-      player.animState.runCycle += dt * 10;
-      const legAngle = Math.sin(player.animState.runCycle) * 0.55;
-      player.rightLeg.rotation.x = legAngle;
-      player.leftLeg.rotation.x = -legAngle;
-      player.torso.position.y = 1.25 + Math.abs(Math.sin(player.animState.runCycle * 2)) * 0.06;
+    const anim = player.animState;
+    anim.idleTimer += dt;
+
+    // 1. Locomotion Layer (Running vs Ready Stance)
+    if (anim.isRunning) {
+      anim.runCycle += dt * 11.5;
+      const stride = Math.sin(anim.runCycle);
+      const absStride = Math.abs(stride);
+
+      player.rightHip.rotation.x = stride * 0.75;
+      player.rightKnee.rotation.x = Math.max(0, -stride * 0.9);
+
+      player.leftHip.rotation.x = -stride * 0.75;
+      player.leftKnee.rotation.x = Math.max(0, stride * 0.9);
+
+      player.pelvis.position.y = 0.95 + absStride * 0.08;
+      player.torso.rotation.x = 0.12;
+      player.torso.rotation.y = THREE.MathUtils.damp(player.torso.rotation.y, stride * 0.15, 8, dt);
+
+      if (anim.swingProgress === 0) {
+        player.leftShoulder.rotation.x = stride * 0.6;
+        player.leftForearmGroup.rotation.x = -0.5 - absStride * 0.3;
+      }
     } else {
-      player.rightLeg.rotation.x = THREE.MathUtils.damp(player.rightLeg.rotation.x, 0, 8, dt);
-      player.leftLeg.rotation.x = THREE.MathUtils.damp(player.leftLeg.rotation.x, 0, 8, dt);
-      player.torso.position.y = 1.25 + Math.sin(Date.now() * 0.005) * 0.02;
+      // Ready Stance Bounce
+      const bounce = Math.sin(anim.idleTimer * 4.5) * 0.035;
+      player.pelvis.position.y = THREE.MathUtils.damp(player.pelvis.position.y, 0.92 + bounce, 8, dt);
+      player.torso.rotation.x = THREE.MathUtils.damp(player.torso.rotation.x, 0.08, 6, dt);
+      player.torso.rotation.y = THREE.MathUtils.damp(player.torso.rotation.y, 0, 6, dt);
+
+      player.rightHip.rotation.x = THREE.MathUtils.damp(player.rightHip.rotation.x, 0.15, 8, dt);
+      player.rightKnee.rotation.x = THREE.MathUtils.damp(player.rightKnee.rotation.x, 0.22, 8, dt);
+      player.leftHip.rotation.x = THREE.MathUtils.damp(player.leftHip.rotation.x, 0.15, 8, dt);
+      player.leftKnee.rotation.x = THREE.MathUtils.damp(player.leftKnee.rotation.x, 0.22, 8, dt);
+
+      if (anim.swingProgress === 0) {
+        player.leftShoulder.rotation.x = THREE.MathUtils.damp(player.leftShoulder.rotation.x, 0.45, 6, dt);
+        player.leftShoulder.rotation.y = THREE.MathUtils.damp(player.leftShoulder.rotation.y, 0.35, 6, dt);
+        player.leftForearmGroup.rotation.x = THREE.MathUtils.damp(player.leftForearmGroup.rotation.x, -0.85, 6, dt);
+      }
     }
 
-    if (player.animState.swingProgress > 0) {
-      player.animState.swingProgress += dt * 5.0;
-      const p = player.animState.swingProgress;
+    // 2. Charging Windup Stance (when holding strike button)
+    if (anim.isCharging) {
+      const shot = anim.chargingShot || 'FOREHAND';
+      const coilAmount = 0.85 + Math.sin(anim.chargeProgress * Math.PI) * 0.15;
 
-      if (player.animState.swingType === 'BACKHAND') {
-        player.rightArm.rotation.y = Math.sin(p * Math.PI) * 1.4 - 0.2;
-        player.rightArm.rotation.x = -Math.sin(p * Math.PI) * 1.0;
-        player.racket.rotation.z = Math.sin(p * Math.PI) * 1.5;
-      } else if (player.animState.swingType === 'SMASH' || player.animState.swingType === 'SERVE') {
-        player.rightArm.rotation.x = -Math.PI / 2 + Math.sin(p * Math.PI) * 2.0;
-        player.racket.rotation.x = Math.sin(p * Math.PI) * 1.3;
+      if (shot === 'SERVE') {
+        player.torso.rotation.x = -0.22 * coilAmount;
+        player.rightShoulder.rotation.x = 2.1 * coilAmount;
+        player.rightForearmGroup.rotation.x = -1.5;
+        player.leftShoulder.rotation.x = 2.2 * coilAmount; // Toss arm high
+        player.leftForearmGroup.rotation.x = 0.2;
+      } else if (shot === 'BACKHAND') {
+        player.torso.rotation.y = -0.65 * coilAmount;
+        player.rightShoulder.rotation.x = -0.35 * coilAmount;
+        player.rightShoulder.rotation.y = 0.85;
+        player.rightForearmGroup.rotation.x = -1.3;
+        player.leftShoulder.rotation.x = 0.3;
+      } else if (shot === 'SMASH' || shot === 'LOB') {
+        player.torso.rotation.x = -0.15;
+        player.rightShoulder.rotation.x = 1.9 * coilAmount;
+        player.rightForearmGroup.rotation.x = -1.2;
+        player.leftShoulder.rotation.x = 1.2;
+      } else if (shot === 'DROP') {
+        player.torso.rotation.y = 0.3;
+        player.rightShoulder.rotation.x = -0.15;
+        player.rightForearmGroup.rotation.x = -0.6;
       } else {
-        // Forehand
-        player.rightArm.rotation.y = -Math.sin(p * Math.PI) * 1.5 + 0.2;
-        player.rightArm.rotation.x = -Math.sin(p * Math.PI) * 1.0;
-        player.racket.rotation.z = -Math.sin(p * Math.PI) * 1.4;
+        // Forehand deep coil
+        player.torso.rotation.y = 0.7 * coilAmount;
+        player.rightShoulder.rotation.x = -0.45 * coilAmount;
+        player.rightForearmGroup.rotation.x = -1.15;
+        player.leftShoulder.rotation.x = 0.4;
+      }
+      return; // Hold windup stance while charging!
+    }
+
+    // 3. Stroke Swing Layer
+    if (anim.swingProgress > 0) {
+      anim.swingProgress += dt * 4.6; // ~0.22s stroke duration
+      const p = anim.swingProgress;
+
+      if (anim.swingType === 'BACKHAND') {
+        // Closed-stance slice / topspin backhand
+        if (p < 0.35) {
+          const coil = p / 0.35;
+          player.torso.rotation.y = -0.55 * coil;
+          player.rightShoulder.rotation.x = -0.3 * coil;
+          player.rightShoulder.rotation.y = 0.8 * coil;
+          player.rightForearmGroup.rotation.x = -1.4 * coil;
+        } else if (p < 0.7) {
+          const drive = (p - 0.35) / 0.35;
+          player.torso.rotation.y = THREE.MathUtils.lerp(-0.55, 0.4, drive);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(-0.3, 0.85, drive);
+          player.rightShoulder.rotation.y = THREE.MathUtils.lerp(0.8, -0.4, drive);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-1.4, -0.2, drive);
+        } else {
+          const recover = (p - 0.7) / 0.3;
+          player.torso.rotation.y = THREE.MathUtils.lerp(0.4, 0, recover);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(0.85, 0.1, recover);
+          player.rightShoulder.rotation.y = THREE.MathUtils.lerp(-0.4, 0, recover);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-0.2, -0.8, recover);
+        }
+      } else if (anim.swingType === 'SMASH') {
+        // High overhead vertical leap & explosive snap
+        if (p < 0.35) {
+          const cock = p / 0.35;
+          player.pelvis.position.y = 0.95 + 0.35 * cock; // Airborne leap
+          player.torso.rotation.x = -0.35 * cock; // Arch back
+          player.rightShoulder.rotation.x = 2.4 * cock; // Reach skyward
+          player.rightForearmGroup.rotation.x = -1.7 * cock; // Elbow bent behind head
+        } else if (p < 0.65) {
+          const snap = (p - 0.35) / 0.3;
+          player.pelvis.position.y = 1.3 - 0.35 * snap;
+          player.torso.rotation.x = THREE.MathUtils.lerp(-0.35, 0.45, snap);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(2.4, 0.6, snap);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-1.7, -0.1, snap);
+        } else {
+          const land = (p - 0.65) / 0.35;
+          player.pelvis.position.y = THREE.MathUtils.lerp(0.95, 0.92, land);
+          player.torso.rotation.x = THREE.MathUtils.lerp(0.45, 0.08, land);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(0.6, 0.1, land);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-0.1, -0.8, land);
+        }
+      } else if (anim.swingType === 'LOB') {
+        // Deep scoop upward arc
+        if (p < 0.4) {
+          const drop = p / 0.4;
+          player.pelvis.position.y = 0.95 - 0.12 * drop;
+          player.rightShoulder.rotation.x = -0.6 * drop;
+          player.rightForearmGroup.rotation.x = -0.4 * drop;
+        } else {
+          const sweep = (p - 0.4) / 0.6;
+          player.pelvis.position.y = THREE.MathUtils.lerp(0.83, 0.95, sweep);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(-0.6, 1.8, sweep);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-0.4, -0.9, sweep);
+        }
+      } else if (anim.swingType === 'DROP') {
+        // Delicate touch: slight backswing, sudden soft forward push
+        if (p < 0.4) {
+          const prep = p / 0.4;
+          player.rightShoulder.rotation.x = 0.2 * prep;
+          player.rightForearmGroup.rotation.x = -0.5 * prep;
+        } else {
+          const touch = (p - 0.4) / 0.6;
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(0.2, 0.5, touch);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-0.5, -0.3, touch);
+        }
+      } else if (anim.swingType === 'SERVE') {
+        // Windup -> Trophy Pose -> Extension & Pronation
+        if (p < 0.45) {
+          const windup = p / 0.45;
+          player.torso.rotation.x = -0.25 * windup;
+          player.rightShoulder.rotation.x = 2.2 * windup;
+          player.rightForearmGroup.rotation.x = -1.6 * windup;
+          player.leftShoulder.rotation.x = 2.1 * windup; // Toss arm high
+        } else if (p < 0.75) {
+          const impact = (p - 0.45) / 0.3;
+          player.torso.rotation.x = THREE.MathUtils.lerp(-0.25, 0.35, impact);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(2.2, 0.4, impact);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-1.6, -0.1, impact);
+          player.leftShoulder.rotation.x = THREE.MathUtils.lerp(2.1, 0, impact);
+        } else {
+          const recovery = (p - 0.75) / 0.25;
+          player.torso.rotation.x = THREE.MathUtils.lerp(0.35, 0.08, recovery);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(0.4, 0.1, recovery);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-0.1, -0.8, recovery);
+        }
+      } else {
+        // FOREHAND Heavy Topspin Drive
+        if (p < 0.35) {
+          const prep = p / 0.35;
+          player.torso.rotation.y = 0.65 * prep;
+          player.rightShoulder.rotation.x = -0.4 * prep;
+          player.rightForearmGroup.rotation.x = -1.1 * prep;
+        } else if (p < 0.7) {
+          const drive = (p - 0.35) / 0.35;
+          player.torso.rotation.y = THREE.MathUtils.lerp(0.65, -0.5, drive);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(-0.4, 1.15, drive);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-1.1, -0.3, drive);
+        } else {
+          const finish = (p - 0.7) / 0.3;
+          player.torso.rotation.y = THREE.MathUtils.lerp(-0.5, 0, finish);
+          player.rightShoulder.rotation.x = THREE.MathUtils.lerp(1.15, 0.1, finish);
+          player.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(-0.3, -0.8, finish);
+        }
       }
 
-      if (player.animState.swingProgress >= 1.0) {
-        player.animState.swingProgress = 0;
-        player.animState.swingType = null;
+      if (anim.swingProgress >= 1.0) {
+        anim.swingProgress = 0;
+        anim.swingType = null;
       }
-    } else {
-      player.rightArm.rotation.x = THREE.MathUtils.damp(player.rightArm.rotation.x, 0.35, 6, dt);
-      player.rightArm.rotation.y = THREE.MathUtils.damp(player.rightArm.rotation.y, -0.25, 6, dt);
-      player.racket.rotation.x = THREE.MathUtils.damp(player.racket.rotation.x, Math.PI / 4, 6, dt);
-      player.racket.rotation.z = THREE.MathUtils.damp(player.racket.rotation.z, 0, 6, dt);
     }
   }
 
   /**
-   * Main per-frame render tick
+   * Dynamic Camera Update
+   * Respects cameraZoom slider (0.6x close to 1.8x wide) and dynamic follow smoothing.
    */
+  private updateCamera(dt: number) {
+    const zoom = this.graphicsConfig.cameraZoom;
+    const p1 = this.player1.root.position;
+    const ball = this.ballMesh.position;
+
+    switch (this.graphicsConfig.cameraAngle) {
+      case 'chase': {
+        // Behind-the-player dynamic follow camera
+        const targetX = p1.x * 0.55;
+        const targetY = 3.6 * zoom;
+        const targetZ = p1.z + (6.2 * zoom);
+
+        _camDesiredPos.set(targetX, targetY, targetZ);
+        this.camera.position.lerp(_camDesiredPos, Math.min(1.0, dt * 7.5));
+
+        _camLookAt.set(p1.x * 0.25 + ball.x * 0.15, 1.25, -2.5);
+        this.camera.lookAt(_camLookAt);
+        break;
+      }
+
+      case 'broadcast': {
+        // TV Broadcast angle
+        const targetY = 8.5 * zoom;
+        const targetZ = 18.0 * zoom;
+        _camDesiredPos.set(0, targetY, targetZ);
+        this.camera.position.lerp(_camDesiredPos, Math.min(1.0, dt * 6.0));
+        _camLookAt.set(0, 1.1, 0);
+        this.camera.lookAt(_camLookAt);
+        break;
+      }
+
+      case 'baseline': {
+        // Low baseline angle
+        const targetY = 2.4 * zoom;
+        const targetZ = p1.z + (4.6 * zoom);
+        _camDesiredPos.set(p1.x * 0.3, targetY, targetZ);
+        this.camera.position.lerp(_camDesiredPos, Math.min(1.0, dt * 7.5));
+        _camLookAt.set(0, 1.4, -4.0);
+        this.camera.lookAt(_camLookAt);
+        break;
+      }
+
+      case 'mount': {
+        // High mount stand behind player with 1m–50m adjustable height
+        // Shows whole pitch from top from player's perspective and optimal pitch angle
+        const height = THREE.MathUtils.clamp(this.graphicsConfig.cameraHeight || 10.0, 1.0, 50.0);
+        const distBehind = Math.max(3.5, height * 0.72) * zoom;
+        const targetX = p1.x * 0.45;
+        const targetY = height * zoom;
+        const targetZ = p1.z + distBehind;
+
+        _camDesiredPos.set(targetX, targetY, targetZ);
+        this.camera.position.lerp(_camDesiredPos, Math.min(1.0, dt * 7.0));
+
+        const lookTargetZ = THREE.MathUtils.lerp(-1.0, -5.5, Math.min(1.0, height / 30.0));
+        _camLookAt.set(p1.x * 0.2 + ball.x * 0.1, 0.9, lookTargetZ);
+        this.camera.lookAt(_camLookAt);
+        break;
+      }
+
+      case 'overhead':
+      default: {
+        // Tactical overhead view
+        const targetY = 19.0 * zoom;
+        _camDesiredPos.set(0, targetY, 4.0 * zoom);
+        this.camera.position.lerp(_camDesiredPos, Math.min(1.0, dt * 6.0));
+        _camLookAt.set(0, 0, 0);
+        this.camera.lookAt(_camLookAt);
+        break;
+      }
+    }
+  }
+
+  private updateCameraInstant() {
+    this.camera.position.set(0, 3.6, 18.0);
+    this.camera.lookAt(0, 1.2, -2.5);
+  }
+
   public render(dt: number) {
     if (this.isDisposed) return;
 
-    // Fast particle updates
+    // Update dynamic follow camera
+    this.updateCamera(dt);
+
+    // Sync ball shadow position & size
+    this.ballShadow.position.x = this.ballMesh.position.x;
+    this.ballShadow.position.z = this.ballMesh.position.z;
+    const shadowScale = THREE.MathUtils.clamp(1.0 - (this.ballMesh.position.y / 6.0), 0.3, 1.2);
+    this.ballShadow.scale.set(shadowScale, shadowScale, shadowScale);
+
+    // Update impact particles
     for (let i = this.impactParticles.length - 1; i >= 0; i--) {
       const p = this.impactParticles[i];
-      const uData = (p.geometry as unknown as { userData: { velocities: Float32Array; life: number } }).userData;
-      uData.life -= dt * 3.0;
+      const userData = (p.geometry as unknown as { userData: { velocities: Float32Array; life: number } }).userData;
+      userData.life -= dt * 1.5;
 
-      const pos = p.geometry.attributes.position.array as Float32Array;
-      const v = uData.velocities;
-      for (let j = 0; j < pos.length / 3; j++) {
-        pos[j * 3] += v[j * 3] * dt;
-        pos[j * 3 + 1] += v[j * 3 + 1] * dt;
-        pos[j * 3 + 2] += v[j * 3 + 2] * dt;
-        v[j * 3 + 1] -= 9.8 * dt;
+      const posAttr = p.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const count = posAttr.count;
+      for (let j = 0; j < count; j++) {
+        posAttr.setXYZ(
+          j,
+          posAttr.getX(j) + userData.velocities[j * 3] * dt,
+          posAttr.getY(j) + userData.velocities[j * 3 + 1] * dt,
+          posAttr.getZ(j) + userData.velocities[j * 3 + 2] * dt
+        );
+        userData.velocities[j * 3 + 1] -= 9.8 * dt; // gravity on particles
       }
-      p.geometry.attributes.position.needsUpdate = true;
-      (p.material as THREE.PointsMaterial).opacity = Math.max(0, uData.life);
+      posAttr.needsUpdate = true;
+      (p.material as THREE.PointsMaterial).opacity = Math.max(0, userData.life);
 
-      if (uData.life <= 0) {
+      if (userData.life <= 0) {
         this.scene.remove(p);
         p.geometry.dispose();
         (p.material as THREE.Material).dispose();
@@ -660,40 +1206,92 @@ export class TennisScene3D {
       }
     }
 
-    // Ball contact shadow update
-    this.ballShadow.position.x = this.ballMesh.position.x;
-    this.ballShadow.position.z = this.ballMesh.position.z;
-    const heightFactor = Math.max(0.2, 1.0 - this.ballMesh.position.y * 0.15);
-    this.ballShadow.scale.set(heightFactor, heightFactor, 1);
-    (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0.12, 0.45 - this.ballMesh.position.y * 0.08);
-
-    // Smooth TV Broadcast Camera Tracking (telephoto depth)
-    if (this.graphicsConfig.cameraAngle === 'broadcast') {
-      const targetCamX = THREE.MathUtils.clamp(this.ballMesh.position.x * 0.25, -2.5, 2.5);
-      this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, targetCamX, 4, dt);
-
-      _vec3Target.set(this.ballMesh.position.x * 0.2, 0.9, this.ballMesh.position.z * 0.15);
-      this.camera.lookAt(_vec3Target);
-    }
-
     this.renderer.render(this.scene, this.camera);
   }
 
-  private onResize = () => {
+  public applyResolutionAndScaling() {
     if (!this.container || this.isDisposed) return;
-    const width = this.container.clientWidth;
-    const height = this.container.clientHeight;
-    this.camera.aspect = width / height;
+    const clientW = this.container.clientWidth || window.innerWidth;
+    const clientH = this.container.clientHeight || window.innerHeight;
+    const aspect = clientW / clientH || 16 / 9;
+
+    this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+
+    let targetW = clientW;
+    let targetH = clientH;
+
+    switch (this.graphicsConfig.renderResolution) {
+      case '480p':
+        targetH = 480;
+        targetW = Math.round(480 * aspect);
+        break;
+      case '720p':
+        targetH = 720;
+        targetW = Math.round(720 * aspect);
+        break;
+      case '1080p':
+        targetH = 1080;
+        targetW = Math.round(1080 * aspect);
+        break;
+      case 'auto':
+      default:
+        targetH = clientH;
+        targetW = clientW;
+        break;
+    }
+
+    // Set internal WebGL buffer dimensions without modifying canvas CSS styling
+    this.renderer.setSize(targetW, targetH, false);
+
+    const canvas = this.renderer.domElement;
+    canvas.style.position = 'absolute';
+    canvas.style.inset = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.display = 'block';
+    canvas.style.imageRendering = this.graphicsConfig.scalingFilter === 'pixelated' ? 'pixelated' : 'auto';
+  }
+
+  private handleResize = () => {
+    this.applyResolutionAndScaling();
   };
 
+  public projectToScreen(worldPos: THREE.Vector3): { x: number; y: number } {
+    const temp = worldPos.clone();
+    temp.project(this.camera);
+    return {
+      x: ((temp.x + 1) / 2) * 100,
+      y: ((-temp.y + 1) / 2) * 100,
+    };
+  }
+
+  public getPlayerScreenPosition(playerId: number = 1): { x: number; y: number } {
+    const player = playerId === 2 ? this.player2 : this.player1;
+    const targetPos = player.root.position.clone();
+    targetPos.y += 1.5;
+    targetPos.x += playerId === 1 ? 1.05 : -1.05;
+    return this.projectToScreen(targetPos);
+  }
+
   public dispose() {
+    this.destroy();
+  }
+
+  public destroy() {
     this.isDisposed = true;
-    window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('resize', this.handleResize);
+
+    for (const p of this.impactParticles) {
+      this.scene.remove(p);
+      p.geometry.dispose();
+      (p.material as THREE.Material).dispose();
+    }
+    this.impactParticles = [];
+
     this.renderer.dispose();
-    if (this.renderer.domElement.parentNode) {
-      this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+    if (this.renderer.domElement && this.renderer.domElement.parentElement) {
+      this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);
     }
   }
 }

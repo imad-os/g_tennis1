@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for adding custom render resolution options (480p, 720p, 1080p, Native Auto) and full-screen TV scaling filter options (Smooth Bilinear vs Crisp Pixelated) to maximize framerate and performance on TVs while maintaining full-screen presentation.",
+  "updatedAt": "2026-10-19T15:15:25.108223152Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

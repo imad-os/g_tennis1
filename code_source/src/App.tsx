@@ -14,7 +14,9 @@ import { SettingsModal } from './components/SettingsModal';
 import { MotionLabView } from './components/MotionLabView';
 import { PauseMenu } from './components/PauseMenu';
 import { VictoryModal } from './components/VictoryModal';
+import { GamepadMappingModal } from './components/GamepadMappingModal';
 import {
+  ChargingState,
   CourtSurface,
   GameMode,
   GraphicsConfig,
@@ -42,11 +44,19 @@ export default function App() {
   const [courtSurface, setCourtSurface] = useState<CourtSurface>('hard');
   const [graphicsConfig, setGraphicsConfig] = useState<GraphicsConfig>({
     quality: mypcBridge.getQualityTier() === 'low' ? 'low' : 'mid',
-    cameraAngle: 'broadcast',
+    cameraAngle: 'chase',
+    cameraZoom: 1.0,
+    cameraHeight: 10.0,
+    vfxLevel: 'high',
     spectators: mypcBridge.getQualityTier() !== 'low',
     shadows: false,
     pixelRatio: 1.0,
+    gaugeSpeed: 'balanced',
+    renderResolution: 'auto',
+    scalingFilter: 'smooth',
   });
+
+  const [chargingState, setChargingState] = useState<ChargingState | null>(null);
 
   // Match state
   const [scoreState, setScoreState] = useState<ScoreState>({
@@ -74,8 +84,12 @@ export default function App() {
   const [matchWinner, setMatchWinner] = useState<1 | 2 | null>(null);
   const [finalStats, setFinalStats] = useState<MatchStats | null>(null);
 
+  const [isGamepadMapOpen, setIsGamepadMapOpen] = useState<boolean>(false);
+  const [isDoublesMatch, setIsDoublesMatch] = useState<boolean>(false);
+
   const [p1Config, setP1Config] = useState<PlayerConfig>({
     id: 1,
+    team: 1,
     name: 'Player 1',
     isAI: false,
     controller: 'motion',
@@ -83,6 +97,7 @@ export default function App() {
 
   const [p2Config, setP2Config] = useState<PlayerConfig>({
     id: 2,
+    team: 2,
     name: 'Challenger AI',
     isAI: true,
     controller: 'keyboard',
@@ -212,10 +227,21 @@ export default function App() {
         else if (action === 'right') engine.p1Input.x = pressed ? 1 : 0;
         else if (action === 'up') engine.p1Input.z = pressed ? -1 : 0;
         else if (action === 'down') engine.p1Input.z = pressed ? 1 : 0;
-        else if (action === 'confirm' && pressed) {
-          engine.handleButtonHit(1, 'FOREHAND', 3);
-        } else if (action === 'run' && pressed) {
-          engine.handleButtonHit(1, 'BACKHAND', 2);
+        else if (action === 'confirm') {
+          if (pressed) engine.startCharging(1, 'FLAT');
+          else engine.releaseCharging(1);
+        } else if (action === 'run') {
+          if (pressed) engine.startCharging(1, 'SLICE');
+          else engine.releaseCharging(1);
+        } else if (action === 'topspin') {
+          if (pressed) engine.startCharging(1, 'TOPSPIN');
+          else engine.releaseCharging(1);
+        } else if (action === 'smash') {
+          if (pressed) engine.startCharging(1, 'SMASH');
+          else engine.releaseCharging(1);
+        } else if (action === 'drop') {
+          if (pressed) engine.startCharging(1, 'DROP');
+          else engine.releaseCharging(1);
         }
       }
 
@@ -225,10 +251,21 @@ export default function App() {
         else if (action === 'right') engine.p2Input.x = pressed ? 1 : 0;
         else if (action === 'up') engine.p2Input.z = pressed ? -1 : 0;
         else if (action === 'down') engine.p2Input.z = pressed ? 1 : 0;
-        else if (action === 'confirm' && pressed) {
-          engine.handleButtonHit(2, 'FOREHAND', 3);
-        } else if (action === 'run' && pressed) {
-          engine.handleButtonHit(2, 'BACKHAND', 2);
+        else if (action === 'confirm') {
+          if (pressed) engine.startCharging(2, 'FLAT');
+          else engine.releaseCharging(2);
+        } else if (action === 'run') {
+          if (pressed) engine.startCharging(2, 'SLICE');
+          else engine.releaseCharging(2);
+        } else if (action === 'topspin') {
+          if (pressed) engine.startCharging(2, 'TOPSPIN');
+          else engine.releaseCharging(2);
+        } else if (action === 'smash') {
+          if (pressed) engine.startCharging(2, 'SMASH');
+          else engine.releaseCharging(2);
+        } else if (action === 'drop') {
+          if (pressed) engine.startCharging(2, 'DROP');
+          else engine.releaseCharging(2);
         }
       }
     });
@@ -258,15 +295,42 @@ export default function App() {
       const playerIdx: 1 | 2 = dev === 'pad1' ? 2 : 1;
 
       if (pressed) {
+        // Button Down: Begin charging shot & windup
         if (index === 0) {
-          // A: Forehand Drive
-          engine.handleButtonHit(playerIdx, 'FOREHAND', 3);
+          // A / ✕: Flat Drive (Auto Forehand/Backhand)
+          engine.startCharging(playerIdx, 'FLAT');
         } else if (index === 1) {
-          // B: Slice / Backhand
-          engine.handleButtonHit(playerIdx, 'BACKHAND', 2);
+          // B / ◯: Slice (Underspin)
+          engine.startCharging(playerIdx, 'SLICE');
+        } else if (index === 2) {
+          // X / ▢: Heavy Topspin
+          engine.startCharging(playerIdx, 'TOPSPIN');
         } else if (index === 3) {
-          // Y: Power Smash
-          engine.handleButtonHit(playerIdx, 'SMASH', 5);
+          // Y / △: Overhead Smash / Tactical Lob
+          engine.startCharging(playerIdx, 'SMASH');
+        } else if (index === 5) {
+          // RB / R1: Drop Shot
+          engine.startCharging(playerIdx, 'DROP');
+        } else if (index === 7) {
+          // RT / R2: Power Smash / Winner
+          engine.startCharging(playerIdx, 'SMASH');
+        } else if (index === 4 || index === 6) {
+          // LB / LT: Defensive Slice
+          engine.startCharging(playerIdx, 'SLICE');
+        }
+      } else {
+        // Button Released: Strike ball with captured power meter level!
+        if (
+          index === 0 ||
+          index === 1 ||
+          index === 2 ||
+          index === 3 ||
+          index === 4 ||
+          index === 5 ||
+          index === 6 ||
+          index === 7
+        ) {
+          engine.releaseCharging(playerIdx);
         }
       }
     });
@@ -319,21 +383,52 @@ export default function App() {
     sound.init();
     sound.playUIBeep(true);
 
+    const isDoubles = mode === 'doubles_ai' || mode === 'doubles_local';
+    const isDoublesLocal = mode === 'doubles_local';
     const is2P = mode === 'local2p';
+    const hasMotion = mypcBridge.isPhoneMotionActive();
+
+    setIsDoublesMatch(isDoubles);
+
     const p1: PlayerConfig = {
       id: 1,
+      team: 1,
       name: mypcBridge.getProfileName() || 'Player 1',
       isAI: false,
-      controller: 'motion',
+      controller: hasMotion ? 'motion' : 'gamepad',
     };
 
     const p2: PlayerConfig = {
       id: 2,
-      name: is2P ? 'Player 2' : 'Grand Champion AI',
+      team: 2,
+      name: is2P ? 'Player 2' : (isDoubles ? 'CPU 1' : 'Grand Champion AI'),
       isAI: !is2P,
       controller: 'gamepad',
       difficulty: 'pro',
     };
+
+    let p3: PlayerConfig | undefined;
+    let p4: PlayerConfig | undefined;
+
+    if (isDoubles) {
+      p3 = {
+        id: 3,
+        team: 1,
+        name: isDoublesLocal ? 'Friend (P2)' : 'Partner (AI)',
+        isAI: !isDoublesLocal,
+        controller: isDoublesLocal ? 'gamepad' : 'keyboard',
+        difficulty: 'pro',
+      };
+
+      p4 = {
+        id: 4,
+        team: 2,
+        name: 'CPU 2',
+        isAI: true,
+        controller: 'keyboard',
+        difficulty: 'pro',
+      };
+    }
 
     setP1Config(p1);
     setP2Config(p2);
@@ -363,8 +458,18 @@ export default function App() {
             setMatchWinner(winner);
             setFinalStats(stats);
           },
-        }
+          onChargingUpdate: (charging) => {
+            setChargingState(charging);
+          },
+        },
+        isDoubles,
+        p3,
+        p4
       );
+
+      if (engineRef.current) {
+        engineRef.current.setGaugeSpeed(graphicsConfig.gaugeSpeed);
+      }
     }
 
     setCurrentScreen('playing');
@@ -386,8 +491,20 @@ export default function App() {
     if (sceneRef.current) {
       sceneRef.current.setGraphicsConfig(updated);
       if (cfg.cameraAngle) {
-        sceneRef.current.setCameraPosition(cfg.cameraAngle);
+        sceneRef.current.setCameraAngle(cfg.cameraAngle);
       }
+      if (cfg.cameraZoom !== undefined) {
+        sceneRef.current.setCameraZoom(cfg.cameraZoom);
+      }
+      if (cfg.cameraHeight !== undefined) {
+        sceneRef.current.setCameraHeight(cfg.cameraHeight);
+      }
+      if (cfg.vfxLevel !== undefined) {
+        sceneRef.current.setVFXLevel(cfg.vfxLevel);
+      }
+    }
+    if (cfg.gaugeSpeed && engineRef.current) {
+      engineRef.current.setGaugeSpeed(cfg.gaugeSpeed);
     }
   };
 
@@ -407,6 +524,7 @@ export default function App() {
             }
           }}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenGamepadMapping={() => setIsGamepadMapOpen(true)}
           phoneConnected={phoneConnected}
         />
       )}
@@ -415,12 +533,28 @@ export default function App() {
       {currentScreen === 'playing' && (
         <MatchHUD
           score={scoreState}
-          p1Name={p1Config.name}
-          p2Name={p2Config.name}
-          p1Controller={p1Config.controller}
-          p2Controller={p2Config.isAI ? 'AI' : '2P'}
+          p1Name={isDoublesMatch ? `${p1Config.name} & Partner` : p1Config.name}
+          p2Name={isDoublesMatch ? 'CPU 1 & CPU 2' : p2Config.name}
+          p1Controller={phoneConnected ? 'Motion 📱' : 'Gamepad 🎮'}
+          p2Controller={p2Config.isAI ? 'AI 🤖' : '2P 🎮'}
           currentShotToast={shotToast}
           rallyCount={rallyCount}
+          cameraZoom={graphicsConfig.cameraZoom}
+          onCameraZoomChange={(zoom) => {
+            handleChangeGraphicsConfig({ cameraZoom: zoom });
+          }}
+          cameraAngle={graphicsConfig.cameraAngle}
+          onCameraAngleChange={(mode) => {
+            handleChangeGraphicsConfig({ cameraAngle: mode });
+          }}
+          cameraHeight={graphicsConfig.cameraHeight || 10.0}
+          onCameraHeightChange={(height) => {
+            handleChangeGraphicsConfig({ cameraHeight: height });
+          }}
+          renderResolution={graphicsConfig.renderResolution}
+          onRenderResolutionChange={(res) => {
+            handleChangeGraphicsConfig({ renderResolution: res });
+          }}
           onPauseClick={() => {
             setIsPaused(true);
             if (rafRef.current) {
@@ -428,6 +562,9 @@ export default function App() {
               rafRef.current = 0;
             }
           }}
+          onOpenGamepadMapping={() => setIsGamepadMapOpen(true)}
+          isDoubles={isDoublesMatch}
+          chargingState={chargingState}
         />
       )}
 
@@ -443,13 +580,6 @@ export default function App() {
             setIsPaused(false);
             if (!rafRef.current) {
               lastTimeRef.current = 0;
-              // restart loop
-              const restartAnim = () => {
-                if (mountRef.current) {
-                  // will restart via state
-                }
-              };
-              restartAnim();
             }
           }}
           onRestart={() => {
@@ -457,6 +587,7 @@ export default function App() {
             engineRef.current?.restart();
           }}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenGamepadMapping={() => setIsGamepadMapOpen(true)}
           onOpenMotionLab={() => setCurrentScreen('motion_lab')}
           onQuitToTitle={() => {
             setIsPaused(false);
@@ -477,8 +608,15 @@ export default function App() {
             setIsSettingsOpen(false);
             setCurrentScreen('motion_lab');
           }}
+          onOpenGamepadMapping={() => setIsGamepadMapOpen(true)}
         />
       )}
+
+      {/* Interactive Gamepad Buttons Mapping Modal */}
+      <GamepadMappingModal
+        isOpen={isGamepadMapOpen}
+        onClose={() => setIsGamepadMapOpen(false)}
+      />
 
       {/* Match Victory Modal */}
       {matchWinner && finalStats && (

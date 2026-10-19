@@ -13,6 +13,7 @@ interface PauseMenuProps {
   onRestart: () => void;
   onOpenSettings: () => void;
   onOpenMotionLab: () => void;
+  onOpenGamepadMapping?: () => void;
   onQuitToTitle: () => void;
 }
 
@@ -21,6 +22,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   onRestart,
   onOpenSettings,
   onOpenMotionLab,
+  onOpenGamepadMapping,
   onQuitToTitle,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -29,6 +31,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   const menuOptions = [
     { label: strings.resume, action: onResume, primary: true },
     { label: strings.restart, action: onRestart },
+    ...(onOpenGamepadMapping ? [{ label: '🎮 Controller Mapping', action: onOpenGamepadMapping }] : []),
     { label: strings.motionLab, action: onOpenMotionLab },
     { label: strings.settings, action: onOpenSettings },
     { label: strings.quit, action: onQuitToTitle, danger: true },

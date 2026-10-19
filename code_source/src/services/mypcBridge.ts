@@ -242,11 +242,93 @@ class MyPCBridgeService {
         },
       });
     } else {
-      // Standalone execution outside My PC iframe
+      // Standalone execution in browser or preview (fallback to browser Gamepad API & Keyboard)
+      this.setupStandaloneBrowserInput();
       if (onReadyToShowUI) {
         onReadyToShowUI();
       }
     }
+  }
+
+  private setupStandaloneBrowserInput() {
+    if (typeof window === 'undefined') return;
+
+    const keyMap: Record<string, string> = {
+      ArrowLeft: 'left',
+      KeyA: 'left',
+      ArrowRight: 'right',
+      KeyD: 'right',
+      ArrowUp: 'up',
+      KeyW: 'up',
+      ArrowDown: 'down',
+      KeyS: 'down',
+      Space: 'confirm',
+      Enter: 'confirm',
+      KeyZ: 'confirm',
+      ShiftLeft: 'run',
+      ShiftRight: 'run',
+      KeyX: 'topspin',
+      KeyC: 'smash',
+      KeyV: 'drop',
+      Escape: 'cancel',
+    };
+
+    window.addEventListener('keydown', (e) => {
+      const action = keyMap[e.code];
+      if (action) {
+        if (action !== 'cancel') e.preventDefault();
+        for (const l of this.actionListeners) {
+          l(action, true, e.repeat, 'keys');
+        }
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const action = keyMap[e.code];
+      if (action) {
+        for (const l of this.actionListeners) {
+          l(action, false, false, 'keys');
+        }
+      }
+    });
+
+    // Browser Gamepad API polling for multiple pads (pad0 for P1, pad1 for P2)
+    const prevButtonsPerPad: Record<number, boolean[]> = {};
+    const pollGamepad = () => {
+      if (typeof navigator !== 'undefined' && navigator.getGamepads) {
+        const pads = navigator.getGamepads();
+        for (let pIdx = 0; pIdx < Math.min(4, pads.length); pIdx++) {
+          const pad = pads[pIdx];
+          if (!pad || !pad.connected) continue;
+
+          const devTag = `pad${pIdx}`;
+          if (!prevButtonsPerPad[pIdx]) {
+            prevButtonsPerPad[pIdx] = [];
+          }
+          const prevButtons = prevButtonsPerPad[pIdx];
+
+          // Axes
+          const axes = [pad.axes[0] || 0, pad.axes[1] || 0, pad.axes[2] || 0, pad.axes[3] || 0];
+          for (const l of this.axesListeners) {
+            l(axes, devTag);
+          }
+
+          // Buttons
+          for (let i = 0; i < pad.buttons.length; i++) {
+            const btn = pad.buttons[i];
+            const isPressed = btn.pressed || btn.value > 0.5;
+            if (isPressed !== prevButtons[i]) {
+              prevButtons[i] = isPressed;
+              for (const l of this.buttonListeners) {
+                l(i, isPressed, btn.value, devTag, pad.id || 'gamepad');
+              }
+            }
+          }
+        }
+      }
+      requestAnimationFrame(pollGamepad);
+    };
+    requestAnimationFrame(pollGamepad);
   }
 
   public onStartEvent(cb: () => void) {
